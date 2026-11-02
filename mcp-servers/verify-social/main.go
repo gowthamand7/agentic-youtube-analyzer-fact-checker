@@ -84,7 +84,9 @@ func main() {
 	}
 	if key := os.Getenv("TAVILY_API_KEY"); key != "" {
 		deps.Tavily = &TavilyClient{APIKey: key}
-		deps.Social.Tavily = deps.Tavily
+		if os.Getenv("REDDIT_TAVILY_FALLBACK") == "1" { // opt-in: spends Tavily credits on Reddit lookups
+			deps.Social.Tavily = deps.Tavily
+		}
 	} else {
 		log.Println("[WARN] TAVILY_API_KEY not set; search_web_factcheck will return errors")
 	}

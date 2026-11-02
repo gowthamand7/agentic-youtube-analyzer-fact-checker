@@ -93,5 +93,5 @@ go test ./mcp-servers/memory-db/... ./mcp-servers/sandbox/... ./mcp-servers/veri
 ```
 
 Notes:
-- Reddit needs no credentials: Reddit no longer grants self-serve API apps, so Reddit lookups run as a Tavily search scoped to `reddit.com` (1 credit each). If `REDDIT_CLIENT_ID`/`SECRET` are set and valid, the direct API is used instead.
+- Reddit uses the official API (`REDDIT_CLIENT_ID`/`SECRET`, app-only OAuth). Without valid credentials the Reddit platform returns an error entry and the other platforms still work. Set `REDDIT_TAVILY_FALLBACK=1` to instead search Reddit via Tavily (`include_domains=reddit.com`, 1 credit per lookup).
 - YouTube may rate-limit transcript requests from your IP after repeated runs; the analysis then aborts with a clear message.
