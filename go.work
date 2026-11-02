@@ -1,3 +1,8 @@
 go 1.26.10
 
-use ./mcp-servers/memory-db
+use (
+	./mcp-servers/memory-db
+	./mcp-servers/sandbox
+)
+
+replace github.com/docker/go-connections => github.com/docker/go-connections v0.5.0
