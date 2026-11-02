@@ -327,8 +327,8 @@ def run_all_checks(env_path: Optional[str] = None) -> Dict[str, Any]:
     env = get_merged_env(env_path)
 
     ch_host = env.get("CLICKHOUSE_HOST", "localhost")
-    ch_tcp = int(env.get("CLICKHOUSE_PORT", "9000"))
-    ch_http = int(env.get("CLICKHOUSE_HTTP_PORT", "8123"))
+    ch_tcp = int(env.get("CLICKHOUSE_PORT") or "9000")
+    ch_http = int(env.get("CLICKHOUSE_HTTP_PORT") or "8123")
     tavily_key = env.get("TAVILY_API_KEY", "")
 
     return {
