@@ -28,6 +28,7 @@ from agent.report import (
     enforce_evidence,
     render_error_report,
     render_markdown,
+    timestamp_to_seconds,
 )
 from agent.schemas import CommentsAnalysis, CriticOutput, SynthesisOutput, VerificationOutput, VideoAnalysis
 from agent.state import MAX_RETRIES, AgentState
@@ -466,6 +467,7 @@ class AgentNodes:
                     for t in out.topics
                     if t.summary.strip() and t.title.strip()
                 ]
+                topics.sort(key=lambda t: float("inf") if (secs := timestamp_to_seconds(t["timestamp"])) is None else secs)  # the model does not always keep video order
                 step["summary"] = f"{len(topics)} topic{'s' if len(topics) != 1 else ''}"
         except Exception:
             topics = []

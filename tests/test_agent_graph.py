@@ -640,3 +640,24 @@ def test_clickbait_rating_accepts_the_alias_the_model_actually_used():
     assert ClickbaitBuster.model_validate({"verdict": "v", "rating": "None"}).clickbait_rating == "Low"
     with pytest.raises(Exception):
         ClickbaitBuster.model_validate({"verdict": "v"})  # a genuinely missing rating is still an error
+
+
+async def test_topics_are_put_in_video_order_even_when_the_model_returns_them_shuffled():
+    shuffled = SynthesisOutput(overview="o", topics=[
+        Topic(title="late", timestamp="17:00", summary="Late topic.", source_urls=[]),
+        Topic(title="bad time", timestamp="soon", summary="Unparseable time goes last.", source_urls=[]),
+        Topic(title="early", timestamp="00:38", summary="Early topic.", source_urls=[]),
+        Topic(title="middle", timestamp="12:00", summary="Middle topic.", source_urls=[]),
+    ])
+    _, state = await run(build_graph(make_tools([]), full_llm(shuffled)))
+    assert [t["title"] for t in state["topics"]] == ["early", "middle", "late", "bad time"]
+
+
+def test_claims_and_key_points_survive_a_model_that_skips_the_secondary_flags():
+    # Seen live: a claim without `quantitative` (twice in a row) aborted a whole run.
+    claim = Claim.model_validate({"timestamp": "01:00", "claim": "X costs $5."})
+    assert claim.quantitative is False and claim.importance == "medium"
+    point = KeyPoint.model_validate({"timestamp": "01:00", "point": "p", "concept": "c"})
+    assert point.importance == "medium" and point.claim_index is None
+    with pytest.raises(Exception):
+        Claim.model_validate({"timestamp": "01:00"})  # the claim text itself is still required

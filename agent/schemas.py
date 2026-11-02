@@ -28,7 +28,7 @@ class KeyPoint(BaseModel):
     timestamp: str = Field(description="MM:SS from the transcript where the point is made.")
     point: str = Field(description="One self-contained sentence stating what the video teaches or reports, in English.")
     concept: str = Field(description="2-6 word canonical name of the idea (e.g. 'MCP client-server architecture'), used to recognise it in other videos.")
-    importance: Importance
+    importance: Importance = "medium"
     claim_index: Optional[int] = Field(
         default=None, description="Index into `claims` when this point rests on a checkable claim; otherwise null."
     )
@@ -37,8 +37,8 @@ class KeyPoint(BaseModel):
 class Claim(BaseModel):
     timestamp: str = Field(description="MM:SS from the transcript where the claim is made.")
     claim: str = Field(description="The host's verifiable factual/statistical/numerical claim, in English.")
-    importance: Importance = Field(description="high = the video's argument depends on it; low = a passing remark.")
-    quantitative: bool = Field(description="True when the claim is arithmetic/financial/benchmark math that code can check.")
+    importance: Importance = Field(default="medium", description="high = the video's argument depends on it; low = a passing remark.")
+    quantitative: bool = Field(default=False, description="True when the claim is arithmetic/financial/benchmark math that code can check.")
 
 
 class SponsorMention(BaseModel):
