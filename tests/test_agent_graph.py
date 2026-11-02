@@ -627,3 +627,13 @@ async def test_hundred_comments_with_replies_are_fetched_and_shown_to_the_model(
     args = next(a for n, a in calls if n == "get_comments")
     assert args["max_results"] == 100 and args["sort_by"] == "top"
     assert "  > @helper [2 likes]: that fixed it for me on Node 22" in llm.sent[CommentsAnalysis]
+
+
+def test_clickbait_rating_accepts_the_alias_the_model_actually_used():
+    # Seen live: the model answered {"verdict": ..., "rating": "Medium"} twice, which aborted a whole run.
+    parsed = ClickbaitBuster.model_validate({"verdict": "Yes in part", "rating": "Medium"})
+    assert parsed.clickbait_rating == "Medium" and parsed.payoff_timestamp == ""
+    assert ClickbaitBuster.model_validate({"verdict": "v", "clickbait_rating": "high"}).clickbait_rating == "High"
+    assert ClickbaitBuster.model_validate({"verdict": "v", "rating": "None"}).clickbait_rating == "Low"
+    with pytest.raises(Exception):
+        ClickbaitBuster.model_validate({"verdict": "v"})  # a genuinely missing rating is still an error

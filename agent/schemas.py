@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 Verdict = Literal["Verified", "Mostly True", "Exaggerated", "Partially False", "Debunked", "Unverified"]
 Importance = Literal["high", "medium", "low"]
@@ -13,8 +13,15 @@ VideoType = Literal["tutorial", "review", "news", "finance", "science", "opinion
 
 class ClickbaitBuster(BaseModel):
     verdict: str = Field(description="Direct 1-2 sentence English answer to the premise of the video title.")
-    payoff_timestamp: str = Field(description="MM:SS (or H:MM:SS) where the host actually answers the title's premise.")
-    clickbait_rating: Literal["Low", "Medium", "High"]
+    payoff_timestamp: str = Field(default="", description="MM:SS (or H:MM:SS) where the host actually answers the title's premise.")
+    # The model sometimes calls this field `rating` (it did so twice in a row, retry included); accept it rather than lose the run.
+    clickbait_rating: Literal["Low", "Medium", "High"] = Field(validation_alias=AliasChoices("clickbait_rating", "rating"))
+
+    @field_validator("clickbait_rating", mode="before")
+    @classmethod
+    def _normalize_rating(cls, value):
+        text = str(value).strip().lower()
+        return {"none": "Low", "no": "Low", "not clickbait": "Low"}.get(text, text.capitalize())
 
 
 class KeyPoint(BaseModel):
