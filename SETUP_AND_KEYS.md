@@ -12,9 +12,9 @@ Create a `.env` file in the project root with the following keys:
 # ==========================================
 # 1. CORE LLM & ORCHESTRATION (REQUIRED)
 # ==========================================
-# Anthropic API Key for Claude 3.5 Haiku orchestrator
+# Anthropic API Key for the Claude Haiku orchestrator
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
-ANTHROPIC_MODEL=claude-3-5-haiku-20241022
+ANTHROPIC_MODEL=claude-haiku-5-5
 
 # ==========================================
 # 2. FACT-CHECKING SEARCH ENGINE (REQUIRED)
@@ -63,3 +63,35 @@ CLICKHOUSE_PASSWORD=secret
 
 ## 3. Quick Verification
 Once you have created `.env` and started Docker Desktop, the Phase 0 harness (`python scripts/harness_check.py`) will automatically test all connections and confirm ready status.
+
+
+---
+
+## 4. Running the Platform
+
+```powershell
+# one-time
+uv sync
+go build -o bin/memory-db-mcp.exe ./mcp-servers/memory-db
+go build -o bin/sandbox-mcp.exe ./mcp-servers/sandbox
+go build -o bin/verify-social-mcp.exe ./mcp-servers/verify-social
+docker compose up -d
+
+# verify
+uv run python scripts/harness_check.py          # env, Docker, ClickHouse, Tavily
+uv run python scripts/mcp_protocol_check.py     # all 4 MCP servers over stdio
+
+# analyze one video from the CLI
+uv run python scripts/run_e2e_test.py --url "https://www.youtube.com/watch?v=..."
+
+# web UI + SSE API at http://localhost:8000
+uv run uvicorn app.main:app --port 8000
+
+# tests
+uv run pytest
+go test ./mcp-servers/...
+```
+
+Notes:
+- Reddit is optional. If the OAuth credentials are rejected, the server falls back to the public search, which Reddit often blocks (HTTP 403); the other platforms still return results.
+- YouTube may rate-limit transcript requests from your IP after repeated runs; the analysis then aborts with a clear message.
