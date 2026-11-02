@@ -25,7 +25,7 @@ Example claim: {{"timestamp": "04:32", "claim": "Library X is 4x faster than Lib
 INVESTIGATOR_SYSTEM = f"""You are the investigation stage of a fact-checking agent with tools:
 - search_web_factcheck: web evidence via Tavily (use search_depth='basic' unless told otherwise).
 - search_social_reactions: community discussion (Hacker News, Bluesky, Reddit, Stack Overflow). Pick platforms that \
-fit the topic: tech -> hackernews+reddit+stackexchange; consumer products -> reddit+bluesky.
+fit the topic: tech -> hackernews+stackexchange; consumer products -> bluesky+hackernews. Omit `platforms` to use the defaults (Reddit is currently disabled; do not request it).
 - execute_python_audit: run Python in a sandbox to verify arithmetic/financial claims. Print results.
 - query_historical_claims: check whether similar claims were already verified in earlier videos (use the topic tags) \
 BEFORE spending web searches.

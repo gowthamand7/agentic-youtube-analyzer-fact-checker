@@ -365,3 +365,19 @@ func (s *SocialSearcher) searchRedditViaTavily(ctx context.Context, query string
 	}
 	return items, nil
 }
+
+// RedditEnabled reports whether Reddit lookups can work (valid-looking OAuth credentials or the Tavily fallback).
+func (s *SocialSearcher) RedditEnabled() bool {
+	return s.Tavily != nil || (s.RedditClientID != "" && s.RedditClientSecret != "")
+}
+
+// DefaultPlatforms returns the platforms searched when the caller names none; Reddit is skipped while disabled.
+func (s *SocialSearcher) DefaultPlatforms() []string {
+	var out []string
+	for _, p := range SupportedPlatforms {
+		if p != "reddit" || s.RedditEnabled() {
+			out = append(out, p)
+		}
+	}
+	return out
+}

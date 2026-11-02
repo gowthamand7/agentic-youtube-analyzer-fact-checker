@@ -222,3 +222,20 @@ func TestRedditFallsBackToTavilyWithoutCredentials(t *testing.T) {
 		t.Errorf("tavily not scoped to reddit.com: %v", got)
 	}
 }
+
+func TestDefaultPlatformsSkipsRedditUntilEnabled(t *testing.T) {
+	s := newTestSocial(t, http.NewServeMux())
+	for _, p := range s.DefaultPlatforms() {
+		if p == "reddit" {
+			t.Fatal("reddit must be off by default")
+		}
+	}
+	s.RedditClientID, s.RedditClientSecret = "id", "secret"
+	found := false
+	for _, p := range s.DefaultPlatforms() {
+		found = found || p == "reddit"
+	}
+	if !found {
+		t.Error("reddit should be included once credentials are set")
+	}
+}

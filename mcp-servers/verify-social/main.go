@@ -49,7 +49,7 @@ func NewMCPServerInstance(deps Deps) *server.MCPServer {
 	s.AddTool(mcp.NewTool("search_social_reactions",
 		mcp.WithDescription("Search Hacker News, Bluesky, Reddit and Stack Overflow concurrently for community discussion about a topic. Platforms that fail are listed in 'errors' without failing the call."),
 		mcp.WithString("topic_query", mcp.Required(), mcp.Description("Topic or claim to look up.")),
-		mcp.WithArray("platforms", mcp.WithStringItems(), mcp.Description("Subset of: hackernews, bluesky, reddit, stackexchange. Defaults to all.")),
+		mcp.WithArray("platforms", mcp.WithStringItems(), mcp.Description("Subset of: hackernews, bluesky, reddit, stackexchange. Defaults to all enabled platforms (reddit is disabled unless configured).")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query, _ := req.RequireString("topic_query")
 		if strings.TrimSpace(query) == "" {
@@ -60,7 +60,7 @@ func NewMCPServerInstance(deps Deps) *server.MCPServer {
 		}
 		platforms := req.GetStringSlice("platforms", nil)
 		if len(platforms) == 0 {
-			platforms = SupportedPlatforms
+			platforms = deps.Social.DefaultPlatforms()
 		}
 		return jsonResult(deps.Social.Search(ctx, query, platforms)), nil
 	})
