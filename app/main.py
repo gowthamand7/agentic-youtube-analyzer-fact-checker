@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict
+from typing import Any, AsyncGenerator, Callable, Dict, Optional
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -17,6 +17,7 @@ from markdown_it import MarkdownIt
 from pydantic import BaseModel
 
 from agent.report import timestamp_to_seconds
+from agent.report_store import load_report, video_id_from_url
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("app")
@@ -27,6 +28,7 @@ VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
 
 PROGRESS_EVENT_TYPES = {
     "request", "node_start", "node_end", "tool_start", "tool_end", "note", "video", "overview", "claims", "verdict",
+    "trace",
 }
 
 Runner = Callable[[str], AsyncGenerator[Dict[str, Any], None]]
@@ -58,6 +60,7 @@ def get_runner() -> Runner:
 
 class AnalyzeRequest(BaseModel):
     video_url: str
+    refresh: bool = False  # True ignores the stored report and runs a new analysis
 
 
 def sse(event: str, data: str) -> str:
@@ -116,11 +119,28 @@ def report_html(state: Dict[str, Any]) -> str:
     body = _md.render(md)
     if accordion:
         body = body.replace(f"<p>{_CLAIMS_MARK}</p>", accordion)
-    return head + f'<article class="report">{body}</article>'
+    aborted = ' data-aborted="1"' if state.get("error_message") else ""
+    return head + f'<article class="report"{aborted}>{body}</article>'
 
 
-async def stream_events(runner: Runner, video_url: str) -> AsyncGenerator[str, None]:
-    """SSE frames: `agent` (JSON progress event), `report` (sanitized HTML), `error`, then `done`."""
+def stored_report(video_url: str, refresh: bool) -> Optional[Dict[str, Any]]:
+    """The previously generated report for this video, unless the caller asked for a fresh run."""
+    video_id = None if refresh else video_id_from_url(video_url)
+    return load_report(video_id) if video_id else None
+
+
+async def stream_events(runner: Runner, video_url: str, refresh: bool = False) -> AsyncGenerator[str, None]:
+    """SSE frames: `agent` (JSON progress event), `cached` + `report` (stored report), `report`, `error`, then `done`.
+
+    A stored report is served without running the agent; `refresh=True` forces a new analysis.
+    """
+    stored = stored_report(video_url, refresh)
+    if stored:
+        meta = {"generated_at": stored["generated_at"], "video": stored.get("video", {}), "video_id": stored["state"].get("video_id")}
+        yield sse("cached", json.dumps(meta, ensure_ascii=False))
+        yield sse("report", report_html(stored["state"]))
+        yield sse("done", "complete")
+        return
     try:
         async for event in runner(video_url):
             if event.get("type") == "final":
@@ -134,9 +154,11 @@ async def stream_events(runner: Runner, video_url: str) -> AsyncGenerator[str, N
 
 
 @app.get("/api/analyze/stream")
-async def analyze_stream(video_url: str = Depends(valid_video_url), runner: Runner = Depends(get_runner)):
+async def analyze_stream(
+    video_url: str = Depends(valid_video_url), refresh: bool = False, runner: Runner = Depends(get_runner)
+):
     return StreamingResponse(
-        stream_events(runner, video_url),
+        stream_events(runner, video_url, refresh),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -145,6 +167,17 @@ async def analyze_stream(video_url: str = Depends(valid_video_url), runner: Runn
 @app.post("/api/analyze")
 async def analyze(body: AnalyzeRequest, runner: Runner = Depends(get_runner)):
     video_url = valid_video_url(body.video_url)
+    stored = stored_report(video_url, body.refresh)
+    if stored:
+        state = stored["state"]
+        return {
+            "report_md": state.get("final_report_md", ""),
+            "overall_accuracy_score": state.get("overall_accuracy_score"),
+            "saved_to_memory": state.get("saved_to_memory", False),
+            "error_message": None,
+            "cached": True,
+            "generated_at": stored["generated_at"],
+        }
     final: Dict[str, Any] = {}
     try:
         async for event in runner(video_url):
@@ -158,6 +191,8 @@ async def analyze(body: AnalyzeRequest, runner: Runner = Depends(get_runner)):
         "overall_accuracy_score": final.get("overall_accuracy_score"),
         "saved_to_memory": final.get("saved_to_memory", False),
         "error_message": final.get("error_message"),
+        "cached": False,
+        "generated_at": None,
     }
 
 

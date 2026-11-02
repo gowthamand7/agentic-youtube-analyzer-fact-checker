@@ -154,3 +154,84 @@ def test_report_renders_claims_as_accordion_and_escapes():
     assert "&lt;b&gt;4x faster&lt;/b&gt;" in out and "<img" not in out
     assert "t=272s" in out and "javascript:" not in out
     assert "<h2>Next</h2>" in out
+
+
+# ---- stored reports ---------------------------------------------------------------------------------
+def _seed_report():
+    from agent.report_store import save_report
+
+    save_report(
+        {
+            "video_id": "dQw4w9WgXcQ",
+            "final_report_md": "# Saved report",
+            "overall_accuracy_score": 61,
+            "saved_to_memory": True,
+            "verification_results": [],
+        },
+        {"title": "Saved title", "channel": "Chan"},
+    )
+
+
+def _counting_runner(calls):
+    async def runner(video_url):
+        calls.append(video_url)
+        yield {"type": "final", "state": {"final_report_md": "# Fresh report", "overall_accuracy_score": 99}}
+
+    return runner
+
+
+def test_stored_report_is_served_without_running_the_agent():
+    _seed_report()
+    calls = []
+    app.dependency_overrides[get_runner] = lambda: _counting_runner(calls)
+    try:
+        with TestClient(app).stream("GET", "/api/analyze/stream", params={"video_url": URL}) as r:
+            events = parse_sse("".join(r.iter_text()))
+    finally:
+        app.dependency_overrides.clear()
+    names = [e for e, _ in events]
+    assert names == ["cached", "report", "done"] and calls == []
+    meta = json.loads(dict(events)["cached"])
+    assert meta["video"]["title"] == "Saved title" and meta["generated_at"] and meta["video_id"] == "dQw4w9WgXcQ"
+    assert "Saved report" in dict(events)["report"] and "61/100" in dict(events)["report"]
+
+
+def test_refresh_ignores_the_stored_report_and_runs_the_agent():
+    _seed_report()
+    calls = []
+    app.dependency_overrides[get_runner] = lambda: _counting_runner(calls)
+    try:
+        with TestClient(app).stream("GET", "/api/analyze/stream", params={"video_url": URL, "refresh": "true"}) as r:
+            events = parse_sse("".join(r.iter_text()))
+    finally:
+        app.dependency_overrides.clear()
+    assert calls == [URL] and [e for e, _ in events] == ["report", "done"] and "Fresh report" in dict(events)["report"]
+
+
+def test_post_analyze_reuses_stored_report_unless_refresh():
+    _seed_report()
+    calls = []
+    app.dependency_overrides[get_runner] = lambda: _counting_runner(calls)
+    try:
+        client = TestClient(app)
+        cached = client.post("/api/analyze", json={"video_url": URL}).json()
+        fresh = client.post("/api/analyze", json={"video_url": URL, "refresh": True}).json()
+    finally:
+        app.dependency_overrides.clear()
+    assert cached["cached"] is True and cached["generated_at"] and cached["report_md"] == "# Saved report"
+    assert fresh["cached"] is False and fresh["report_md"] == "# Fresh report" and calls == [URL]
+
+
+def test_trace_events_are_forwarded_to_the_client():
+    async def runner(video_url):
+        yield {"type": "trace", "record": {"event": "tool_call_start", "tool": "t", "args": {"query": "q"}, "t_ms": 5}}
+        yield {"type": "final", "state": {"final_report_md": "# R"}}
+
+    app.dependency_overrides[get_runner] = lambda: runner
+    try:
+        with TestClient(app).stream("GET", "/api/analyze/stream", params={"video_url": URL}) as r:
+            events = parse_sse("".join(r.iter_text()))
+    finally:
+        app.dependency_overrides.clear()
+    trace = json.loads(events[0][1])
+    assert trace["type"] == "trace" and trace["record"]["args"] == {"query": "q"}

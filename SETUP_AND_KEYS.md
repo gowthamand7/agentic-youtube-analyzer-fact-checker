@@ -127,3 +127,22 @@ Env: `LOG_DIR` changes the directory; `LOG_PROMPTS=1` also records the full LLM 
 | Blocks / outages / unknown errors | never | A temporary YouTube rate limit is never remembered |
 
 To force a fresh fetch, delete the matching file in `cache/` (for example `cache/transcript_<videoId>_en.json`) or the whole folder.
+
+---
+
+## 7. Saved Reports & the Developer Trace
+
+**Saved reports.** A finished analysis is stored in `reports/<videoId>.json` (git-ignored; override with `REPORT_DIR`). Analyzing a video you have already checked shows the saved report instantly (any URL form: `watch?v=`, `youtu.be`, `shorts`) and does not run the agent or spend any API credits. The banner offers **Re-run analysis**, which runs a fresh analysis and replaces the saved report. Aborted runs (no transcript, blocked, etc.) are never saved.
+
+API: `GET /api/analyze/stream?video_url=...&refresh=true` and `POST /api/analyze {"video_url": "...", "refresh": true}` force a re-run; omit `refresh` to reuse. The JSON response includes `cached` and `generated_at`.
+
+**Developer trace.** In the "Agent activity" panel, the **Developer trace** tab streams the raw run line by line, with colour-coded entries:
+
+```
+  2.85s  → CALL  search_web_factcheck(query="Library X vs Y benchmark", search_depth="basic")
+  3.56s  ← RETURN  search_web_factcheck (710ms)  5 sources: docs.x ...        (click to expand arguments / result)
+  3.56s  → LLM   tool-use round 1  model=claude-haiku-5-5  messages=4
+  3.57s  ← LLM   round 1 decided: ...                                         (expand: the model's stated reasoning)
+```
+
+It shows every tool call with parameter names, results (truncated at 3000 characters), durations, errors with tracebacks, each model call (model, input size, structured output), verdicts and node transitions. **Copy trace** copies it as text. The same records are written to `logs/` (see section 5).

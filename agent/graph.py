@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 
 from agent.mcp_client import open_tools
 from agent.nodes import AgentNodes
+from agent.report_store import save_report
 from agent.runlog import end_run, start_run
 from agent.state import AgentState
 
@@ -65,17 +66,25 @@ async def stream_graph(graph: Any, video_url: str) -> AsyncGenerator[Dict[str, A
             if mode == "custom":
                 if chunk.get("type") not in ("tool_start", "tool_end", "verdict"):  # these have richer dedicated lines
                     run.write("progress", **chunk)
+                for record in run.drain():  # developer trace: every logged record, as it happens
+                    yield {"type": "trace", "record": record}
                 yield chunk
             else:
                 for node_name, update in chunk.items():
                     final.update(update or {})
                     run.write("node_end", node=node_name, state_keys=sorted((update or {}).keys()))
                     yield {"type": "node_end", "node": node_name}
+        meta = final.get("metadata", {})
+        stored = save_report(final, {"title": meta.get("title"), "channel": meta.get("channel_name")})
+        if stored:
+            run.write("report_stored", path=str(stored))
         run.write(
             "request_end", status="aborted" if final.get("error_message") else "ok", error=final.get("error_message"),
             score=final.get("overall_accuracy_score"), saved_to_memory=final.get("saved_to_memory"),
             duration_ms=round((time.monotonic() - started) * 1000),
         )
+        for record in run.drain():
+            yield {"type": "trace", "record": record}
         yield {"type": "final", "state": final}
     except (asyncio.CancelledError, GeneratorExit):
         run.write("request_cancelled", reason="client disconnected or task cancelled")

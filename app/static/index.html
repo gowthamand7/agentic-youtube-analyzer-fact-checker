@@ -18,7 +18,8 @@
         <h1>Agentic YouTube Fact-Checker</h1>
         <p class="lede">
           Paste a video link. The agent audits its claims against web evidence and community discussion,
-          flags sponsorships, and tracks the channel's accuracy over time. You can watch it work.
+          flags sponsorships, and tracks the channel's accuracy over time. Reports are saved, so a video you
+          already checked opens instantly; re-run it any time.
         </p>
       </div>
       <button type="button" id="theme-toggle" class="icon-btn" aria-label="Toggle light/dark theme" title="Toggle theme">◐</button>
@@ -42,7 +43,13 @@
           <span class="activity-title">Agent activity</span>
           <span id="activity-meta" class="activity-meta"></span>
         </summary>
-        <ol id="timeline" class="timeline" aria-live="polite"></ol>
+        <div class="tabs" role="tablist" aria-label="Activity views">
+          <button type="button" role="tab" id="tab-steps" class="tab active" aria-selected="true" aria-controls="timeline">Steps</button>
+          <button type="button" role="tab" id="tab-trace" class="tab" aria-selected="false" aria-controls="trace">Developer trace</button>
+          <button type="button" id="trace-copy" class="tab-action" hidden>Copy trace</button>
+        </div>
+        <ol id="timeline" class="timeline" role="tabpanel" aria-labelledby="tab-steps" aria-live="polite"></ol>
+        <div id="trace" class="trace" role="tabpanel" aria-labelledby="tab-trace" hidden></div>
       </details>
 
       <section id="findings" class="findings" hidden>
@@ -52,6 +59,11 @@
       </section>
 
       <div id="error" class="error" role="alert" hidden></div>
+
+      <div id="report-toolbar" class="report-toolbar" hidden>
+        <span id="report-status"></span>
+        <button type="button" id="rerun-btn" class="secondary">Re-run analysis</button>
+      </div>
       <div id="report" aria-live="polite"></div>
     </section>
   </main>
@@ -70,8 +82,8 @@
         "Partially False": "warn", "Debunked": "bad", "Unverified": "none"
       };
       var $ = function (id) { return document.getElementById(id); };
-      var source = null, timer = null, startedAt = 0, stepCount = 0;
-      var steps = {}, claimEls = {}, currentGroup = null, userScrolled = false;
+      var source = null, timer = null, startedAt = 0, stepCount = 0, currentUrl = "";
+      var steps = {}, claimEls = {}, currentGroup = null, userScrolled = false, traceLines = [];
 
       function el(tag, cls, text) {
         var node = document.createElement(tag);
@@ -83,14 +95,19 @@
       function reset() {
         if (source) source.close();
         clearInterval(timer);
-        steps = {}; claimEls = {}; currentGroup = null; stepCount = 0; userScrolled = false;
+        steps = {}; claimEls = {}; currentGroup = null; stepCount = 0; userScrolled = false; traceLines = [];
         $("timeline").textContent = "";
+        $("trace").textContent = "";
         $("overview").textContent = "";
         $("claims-live").textContent = "";
         $("report").textContent = "";
+        $("activity-meta").textContent = "";
+        delete $("activity-meta").dataset.rid;
         $("error").hidden = true;
         $("findings").hidden = true;
         $("video-card").hidden = true;
+        $("report-toolbar").hidden = true;
+        $("activity").hidden = false;
         $("activity").open = true;
         $("run").hidden = false;
       }
@@ -105,6 +122,7 @@
         if (!userScrolled) window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
       }
 
+      /* ---------- Steps tab ---------- */
       function addTimelineItem(item) {
         (currentGroup || $("timeline")).appendChild(item);
         follow();
@@ -147,12 +165,108 @@
       }
 
       function onVideo(e) {
-        var card = $("video-card");
-        card.querySelector(".video-title").textContent = e.title;
-        card.querySelector(".video-meta").textContent = e.channel + (e.upload_date ? " · " + e.upload_date : "");
-        card.hidden = false;
+        showVideo(e.title, e.channel + (e.upload_date ? " · " + e.upload_date : ""));
       }
 
+      function showVideo(title, meta) {
+        var card = $("video-card");
+        card.querySelector(".video-title").textContent = title || "";
+        card.querySelector(".video-meta").textContent = meta || "";
+        card.hidden = !title;
+      }
+
+      /* ---------- Developer trace tab ---------- */
+      function fmtVal(v) {
+        return typeof v === "string" ? JSON.stringify(v.length > 160 ? v.slice(0, 160) + "…" : v) : JSON.stringify(v);
+      }
+
+      function fmtArgs(args) {
+        if (args && typeof args === "object") {
+          return Object.keys(args).map(function (k) { return k + "=" + fmtVal(args[k]); }).join(", ");
+        }
+        return args ? String(args) : "";
+      }
+
+      function pretty(v) {
+        if (typeof v === "string") { try { return JSON.stringify(JSON.parse(v), null, 2); } catch (e) { return v; } }
+        return JSON.stringify(v, null, 2);
+      }
+
+      function describeTrace(r) {
+        var ms = function (n) { return n === undefined || n === null ? "" : " (" + n + "ms)"; };
+        switch (r.event) {
+          case "request_start": return { cls: "node", text: "request started  video_url=" + fmtVal(r.video_url) };
+          case "tool_call_start": return { cls: "call", text: "→ CALL  " + r.tool + "(" + fmtArgs(r.args) + ")" };
+          case "tool_call":
+            return {
+              cls: r.ok ? "ret" : "fail",
+              text: "← " + (r.ok ? "RETURN" : "FAILED") + "  " + r.tool + ms(r.duration_ms) + "  " + (r.summary || ""),
+              detail: [["arguments", pretty(r.args)], ["result", pretty(r.result)], r.error ? ["error", r.error] : null]
+            };
+          case "llm_call_start":
+            return { cls: "llm", text: "→ LLM   " + r.purpose + "  model=" + r.model + (r.input_chars ? "  input_chars=" + r.input_chars : "") };
+          case "llm_call":
+            return {
+              cls: r.ok ? "llm" : "fail",
+              text: "← LLM   " + (r.ok ? "done" : "FAILED") + ms(r.duration_ms) + "  " + (r.summary || r.purpose),
+              detail: [r.output ? ["structured output", pretty(r.output)] : null, r.prompt ? ["prompt", r.prompt] : null, r.error ? ["error", r.error] : null]
+            };
+          case "llm_turn_start":
+            return { cls: "llm", text: "→ LLM   tool-use round " + r.round + "  model=" + r.model + "  messages=" + r.messages };
+          case "llm_turn":
+            var calls = (r.tool_calls || []).map(function (c) { return c.name + "(" + fmtArgs(c.args) + ")"; });
+            return {
+              cls: "llm",
+              text: "← LLM   round " + r.round + " decided: " + (calls.length ? calls.join("; ") : "no more tools"),
+              detail: [r.text ? ["model's stated reasoning", r.text] : null]
+            };
+          case "verdict": return { cls: "ret", text: "VERDICT  " + r.verdict + " (" + r.confidence + ")  " + r.claim, detail: [["sources", (r.sources || []).join("\n")]] };
+          case "node_end": return { cls: "node", text: "node finished: " + r.node + "  state_keys=" + (r.state_keys || []).join(",") };
+          case "progress":
+            if (r.type === "node_start") return { cls: "node", text: "node starting: " + r.node + (r.attempt ? "  attempt=" + r.attempt : "") };
+            if (r.type === "note") return { cls: "note", text: "note: " + r.text };
+            return { cls: "node", text: "event: " + r.type };
+          case "report_stored": return { cls: "node", text: "report stored for reuse" };
+          case "request_end": return { cls: r.status === "ok" ? "ret" : "fail", text: "request finished  status=" + r.status + "  score=" + r.score + "  saved_to_memory=" + r.saved_to_memory + ms(r.duration_ms) };
+          case "request_error": return { cls: "fail", text: "request FAILED", detail: [["error", r.error]] };
+          case "request_cancelled": return { cls: "fail", text: "request cancelled: " + r.reason };
+          default: return { cls: "node", text: r.event };
+        }
+      }
+
+      function onTrace(e) {
+        var r = e.record, d = describeTrace(r);
+        var time = (r.t_ms / 1000).toFixed(2).padStart(7) + "s  ";
+        traceLines.push(time + d.text);
+        var details = (d.detail || []).filter(Boolean);
+        var line = el(details.length ? "details" : "div", "trace-line trace-" + d.cls);
+        var head = el(details.length ? "summary" : "div", "trace-head");
+        head.appendChild(el("span", "trace-time", time));
+        head.appendChild(el("span", "trace-text", d.text));
+        line.appendChild(head);
+        details.forEach(function (pair) {
+          line.appendChild(el("div", "trace-label", pair[0]));
+          line.appendChild(el("pre", "trace-pre", pair[1]));
+          traceLines.push("            " + pair[0] + ": " + pair[1].replace(/\n/g, "\n            "));
+        });
+        var box = $("trace");
+        var pinned = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+        box.appendChild(line);
+        if (pinned) box.scrollTop = box.scrollHeight;
+      }
+
+      function selectTab(name) {
+        var trace = name === "trace";
+        $("tab-steps").classList.toggle("active", !trace);
+        $("tab-trace").classList.toggle("active", trace);
+        $("tab-steps").setAttribute("aria-selected", String(!trace));
+        $("tab-trace").setAttribute("aria-selected", String(trace));
+        $("timeline").hidden = trace;
+        $("trace").hidden = !trace;
+        $("trace-copy").hidden = !trace;
+      }
+
+      /* ---------- Findings ---------- */
       function showFindings() { $("findings").hidden = false; }
 
       function onOverview(e) {
@@ -201,8 +315,7 @@
         row.appendChild(el("span", "claim-text", r.claim));
         card.appendChild(row);
         card.appendChild(el("p", "claim-evidence", r.evidence));
-        var meta = el("div", "claim-meta", "at " + r.timestamp + " · confidence: " + r.confidence);
-        card.appendChild(meta);
+        card.appendChild(el("div", "claim-meta", "at " + r.timestamp + " · confidence: " + r.confidence));
       }
 
       function onRequest(e) {
@@ -211,10 +324,25 @@
       }
 
       var HANDLERS = {
-        request: onRequest,
-        node_start: onNodeStart, tool_start: onToolStart, tool_end: onToolEnd, note: onNote,
-        video: onVideo, overview: onOverview, claims: onClaims, verdict: onVerdict
+        request: onRequest, node_start: onNodeStart, tool_start: onToolStart, tool_end: onToolEnd, note: onNote,
+        video: onVideo, overview: onOverview, claims: onClaims, verdict: onVerdict, trace: onTrace
       };
+
+      /* ---------- Saved report banner ---------- */
+      function ago(iso) {
+        var secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+        if (isNaN(secs)) return "earlier";
+        if (secs < 90) return "just now";
+        if (secs < 5400) return Math.round(secs / 60) + " min ago";
+        if (secs < 129600) return Math.round(secs / 3600) + " h ago";
+        return Math.round(secs / 86400) + " days ago";
+      }
+
+      function showToolbar(text, label) {
+        $("report-status").textContent = text;
+        $("rerun-btn").textContent = label || "Re-run analysis";
+        $("report-toolbar").hidden = false;
+      }
 
       function finish() {
         clearInterval(timer);
@@ -222,28 +350,39 @@
         if (source) source.close();
         source = null;
         $("submit-btn").disabled = false;
+        $("rerun-btn").disabled = false;
         document.querySelectorAll(".step.running").forEach(function (s) { s.classList.remove("running"); });
       }
 
-      $("analyze-form").addEventListener("submit", function (ev) {
-        ev.preventDefault();
-        var url = $("video_url").value.trim();
-        if (!url) return;
+      /* ---------- Run ---------- */
+      function start(url, refresh) {
+        currentUrl = url;
         reset();
+        selectTab("steps");
         $("submit-btn").disabled = true;
+        $("rerun-btn").disabled = true;
         startedAt = Date.now();
         timer = setInterval(tick, 1000);
-        source = new EventSource("/api/analyze/stream?video_url=" + encodeURIComponent(url));
+        source = new EventSource("/api/analyze/stream?video_url=" + encodeURIComponent(url) + (refresh ? "&refresh=true" : ""));
 
         source.addEventListener("agent", function (m) {
           var e = JSON.parse(m.data);
           var h = HANDLERS[e.type];
           if (h) h(e);
         });
+        source.addEventListener("cached", function (m) {
+          var c = JSON.parse(m.data);
+          clearInterval(timer);
+          $("activity").hidden = true; // nothing ran, so there is no activity to show
+          if (c.video && c.video.title) showVideo(c.video.title, c.video.channel || "");
+          showToolbar("Saved report · generated " + ago(c.generated_at), "Re-run analysis");
+        });
         source.addEventListener("report", function (m) {
           $("report").innerHTML = m.data; // server-sanitized HTML (raw HTML in model output is escaped)
           $("findings").hidden = true;
-          $("activity").open = false;
+          if (!$("activity").hidden) $("activity").open = false;
+          var aborted = !!$("report").querySelector("[data-aborted]");
+          if ($("report-toolbar").hidden) showToolbar(aborted ? "The analysis did not complete." : "Report generated just now.", aborted ? "Try again" : "Re-run analysis");
           $("report").scrollIntoView({ behavior: "smooth", block: "start" });
         });
         source.addEventListener("error", function (m) {
@@ -254,6 +393,22 @@
           finish();
         });
         source.addEventListener("done", finish);
+      }
+
+      $("analyze-form").addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        var url = $("video_url").value.trim();
+        if (url) start(url, false);
+      });
+      $("rerun-btn").addEventListener("click", function () { if (currentUrl) start(currentUrl, true); });
+
+      $("tab-steps").addEventListener("click", function () { selectTab("steps"); });
+      $("tab-trace").addEventListener("click", function () { selectTab("trace"); });
+      $("trace-copy").addEventListener("click", function () {
+        var btn = $("trace-copy"), text = traceLines.join("\n");
+        var done = function (ok) { btn.textContent = ok ? "Copied" : "Copy failed"; setTimeout(function () { btn.textContent = "Copy trace"; }, 1500); };
+        if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+        else done(false);
       });
 
       window.addEventListener("wheel", function (e) { if (e.deltaY < 0) userScrolled = true; }, { passive: true });

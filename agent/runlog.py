@@ -14,7 +14,7 @@ import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 log = logging.getLogger("yta.run")
 
@@ -30,6 +30,12 @@ def clip(value: Any, limit: int = MAX_FIELD_CHARS) -> Any:
     return text if len(text) <= limit else text[:limit] + f"... [+{len(text) - limit} chars]"
 
 
+def clip_obj(value: Any, limit: int = MAX_FIELD_CHARS) -> Any:
+    """Keep structured values (tool arguments) as objects so parameter names stay visible; clip only when huge."""
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    return value if len(text) <= limit else clip(text, limit)
+
+
 def log_prompts_enabled() -> bool:
     return os.environ.get("LOG_PROMPTS") == "1"
 
@@ -43,7 +49,13 @@ class RunLog:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         self.path = directory / f"{stamp}_{self.rid}.jsonl"
         self._fh = open(self.path, "a", encoding="utf-8", buffering=1)  # line-buffered: readable while running
+        self._pending: List[Dict[str, Any]] = []  # records not yet streamed to the developer trace tab
         self.write("request_start", video_url=video_url)
+
+    def drain(self) -> List[Dict[str, Any]]:
+        """Return and clear the records written since the last call (for the live developer trace)."""
+        records, self._pending = self._pending, []
+        return records
 
     def write(self, event: str, **fields: Any) -> None:
         record: Dict[str, Any] = {
@@ -55,6 +67,7 @@ class RunLog:
         }
         if not self._fh.closed:
             self._fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        self._pending.append(record)
         log.info("[%s] %s", self.rid, _console_line(event, fields))
 
     def close(self) -> None:

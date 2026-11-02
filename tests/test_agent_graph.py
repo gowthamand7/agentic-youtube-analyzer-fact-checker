@@ -288,7 +288,7 @@ async def test_each_run_writes_a_debug_log_with_tool_details(tmp_path, monkeypat
     assert records[-1]["status"] == "ok" and records[-1]["score"] == 35
 
     tool = next(r for r in records if r["event"] == "tool_call" and r["tool"] == "search_web_factcheck")
-    assert "x faster" in tool["args"] and tool["ok"] is True and tool["duration_ms"] >= 0 and "docs.x/bench" in tool["result"]
+    assert tool["args"] == {"query": "x faster"} and tool["ok"] is True and tool["duration_ms"] >= 0 and "docs.x/bench" in tool["result"]
     llm_call = next(r for r in records if r["event"] == "llm_call" and "transcript" in r["purpose"])
     assert llm_call["prompt_chars"] > 0 and "clickbait" in llm_call["output"]
     assert llm_call["prompt"] is None  # full prompts only with LOG_PROMPTS=1
@@ -330,7 +330,7 @@ async def test_unparseable_history_is_ignored_and_logged_as_failed(tmp_path, mon
     llm = FakeLLM({ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
     _, state = await run(build_graph(tools, llm))
     assert state["channel_history"] == {}
-    failed = next(r for r in _read_log(next(tmp_path.glob("*.jsonl"))) if r.get("tool") == "get_channel_history")
+    failed = next(r for r in _read_log(next(tmp_path.glob("*.jsonl"))) if r["event"] == "tool_call" and r["tool"] == "get_channel_history")
     assert failed["ok"] is False and "boom" in failed["summary"]
 
 
@@ -339,3 +339,62 @@ def test_narration_marks_cached_results():
 
     assert describe_end("get_transcript", {"status": "OK", "segments": [1], "language": "en", "cached": True}) == (True, "1 lines (en) (cached)")
     assert describe_end("get_video_metadata", {"title": "T", "channel_name": "C", "cached": True})[1].endswith("(cached)")
+
+
+async def test_trace_events_stream_tool_calls_with_parameter_names_before_they_finish():
+    llm = FakeLLM(
+        {ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
+        tool_turns=[
+            AIMessage(content="Checking docs.", tool_calls=[{"name": "search_web_factcheck", "args": {"query": "x faster", "search_depth": "basic"}, "id": "1"}]),
+            AIMessage(content="done"),
+        ],
+    )
+    events, _ = await run(build_graph(make_tools([]), llm))
+    trace = [e["record"] for e in events if e["type"] == "trace"]
+    names = [r["event"] for r in trace]
+
+    start = next(r for r in trace if r["event"] == "tool_call_start" and r["tool"] == "search_web_factcheck")
+    end = next(r for r in trace if r["event"] == "tool_call" and r["id"] == start["id"])
+    assert start["args"] == {"query": "x faster", "search_depth": "basic"}  # parameter names preserved
+    assert names.index("tool_call_start") < names.index("tool_call") and start["t_ms"] <= end["t_ms"]
+    assert {"request_start", "llm_call_start", "llm_call", "llm_turn_start", "llm_turn", "verdict", "report_stored", "request_end"} <= set(names)
+    assert trace[0]["event"] == "request_start" and trace[-1]["event"] == "request_end"
+    # the start record reaches the client before the tool's result (live, not batched at the end)
+    positions = {(e["record"]["event"], e["record"].get("id")): i for i, e in enumerate(events) if e["type"] == "trace"}
+    assert positions[("tool_call_start", start["id"])] < positions[("tool_call", start["id"])]
+
+
+async def test_successful_run_stores_report_and_aborted_run_does_not(tmp_path, monkeypatch):
+    from agent.report_store import load_report
+
+    monkeypatch.setenv("REPORT_DIR", str(tmp_path / "reports"))
+    llm = FakeLLM({ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    await run(build_graph(make_tools([]), llm))
+    stored = load_report("dQw4w9WgXcQ")
+    assert stored["state"]["overall_accuracy_score"] == 35 and stored["video"]["title"] == META["title"]
+    assert stored["state"]["verification_results"][0]["verdict"] == "Partially False"
+
+    other = dict(META, video_id="AAAAAAAAAAA")
+    aborted = make_tools([], {"get_video_metadata": other, "get_transcript": {"status": "TRANSCRIPTS_DISABLED", "segments": []}})
+    await run(build_graph(aborted, FakeLLM({})))
+    assert load_report("AAAAAAAAAAA") is None  # aborted analyses are never stored
+
+
+def test_report_store_roundtrip_validation_and_url_parsing(tmp_path, monkeypatch):
+    from agent.report_store import load_report, save_report, video_id_from_url
+
+    monkeypatch.setenv("REPORT_DIR", str(tmp_path))
+    state = {"video_id": "dQw4w9WgXcQ", "final_report_md": "# R", "overall_accuracy_score": 50, "secret_internal": "x"}
+    assert save_report(state, {"title": "T"}) is not None
+    got = load_report("dQw4w9WgXcQ")
+    assert got["state"] == {"video_id": "dQw4w9WgXcQ", "final_report_md": "# R", "overall_accuracy_score": 50}
+    assert got["video"] == {"title": "T"} and got["generated_at"]
+
+    assert save_report({**state, "error_message": "boom"}) is None and save_report({"final_report_md": "x"}) is None
+    assert load_report("not-an-id") is None and load_report("../../etc/passwd") is None
+    (tmp_path / "BBBBBBBBBBB.json").write_text("{corrupt", encoding="utf-8")
+    assert load_report("BBBBBBBBBBB") is None
+
+    for url in ["https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5s", "https://youtu.be/dQw4w9WgXcQ?si=x", "https://www.youtube.com/shorts/dQw4w9WgXcQ"]:
+        assert video_id_from_url(url) == "dQw4w9WgXcQ"
+    assert video_id_from_url("https://evil.example/watch?v=dQw4w9WgXcQ") is None and video_id_from_url("junk") is None

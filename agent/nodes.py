@@ -15,7 +15,7 @@ from langgraph.config import get_stream_writer
 
 from agent import prompts
 from agent.narration import describe_end, describe_start
-from agent.runlog import clip, log_event, log_prompts_enabled
+from agent.runlog import clip, clip_obj, log_event, log_prompts_enabled
 from agent.report import (
     TRANSCRIPT_ERROR,
     build_save_payload,
@@ -87,6 +87,7 @@ class AgentNodes:
     async def _call(self, name: str, args: Dict[str, Any]) -> Any:
         call_id = uuid.uuid4().hex[:8]
         title, detail = describe_start(name, args)
+        log_event("tool_call_start", id=call_id, tool=name, args=clip_obj(args, 1500))  # logged first so the trace shows it live
         emit({"type": "tool_start", "id": call_id, "tool": name, "title": title, "detail": detail})
         started, error = time.monotonic(), None
         try:
@@ -98,18 +99,22 @@ class AgentNodes:
             error = traceback.format_exc()
         ok, summary = describe_end(name, result)
         log_event(
-            "tool_call", id=call_id, tool=name, args=clip(args, 1500), ok=ok, summary=summary,
+            "tool_call", id=call_id, tool=name, args=clip_obj(args, 1500), ok=ok, summary=summary,
             duration_ms=round((time.monotonic() - started) * 1000), result=clip(result), error=error,
         )
         emit({"type": "tool_end", "id": call_id, "tool": name, "ok": ok, "summary": summary})
         return result
 
+    def _model_name(self) -> str:
+        return str(getattr(self.llm, "model", None) or getattr(self.llm, "model_name", None) or type(self.llm).__name__)
+
     @asynccontextmanager
-    async def _thinking(self, title: str, detail: str | None = None):
+    async def _thinking(self, title: str, detail: str | None = None, input_chars: int | None = None):
         """Timeline step for an LLM call, so the UI shows the agent working between tool calls."""
         step_id = uuid.uuid4().hex[:8]
         info: Dict[str, Any] = {"summary": "Done"}
         started = time.monotonic()
+        log_event("llm_call_start", id=step_id, purpose=title, model=self._model_name(), input_chars=input_chars)
         emit({"type": "tool_start", "id": step_id, "tool": "thinking", "title": title, "detail": detail})
         try:
             yield info
@@ -178,7 +183,8 @@ class AgentNodes:
             f"TOP VIEWER COMMENTS:\n{chr(10).join(comment_lines) or '(none available)'}"
         )
         async with self._thinking(
-            "Reading the transcript for clickbait, sponsors and checkable claims", "this can take a few seconds"
+            "Reading the transcript for clickbait, sponsors and checkable claims", "this can take a few seconds",
+            input_chars=len(human),
         ) as step:
             step["prompt_chars"], step["prompt"] = len(human), human
             out: ExtractionOutput = await self.llm.with_structured_output(ExtractionOutput).ainvoke(
@@ -229,6 +235,7 @@ class AgentNodes:
 
         bound = self.llm.bind_tools([self.tools[n] for n in INVESTIGATION_TOOLS if n in self.tools])
         for round_no in range(self.max_tool_rounds):
+            log_event("llm_turn_start", round=round_no, model=self._model_name(), messages=len(messages))
             ai: AIMessage = await bound.ainvoke(messages)
             messages.append(ai)
             log_event(
@@ -244,7 +251,9 @@ class AgentNodes:
             messages.pop()
 
         messages.append(HumanMessage(content=prompts.VERIFICATION_FINAL))
-        async with self._thinking("Weighing the evidence and writing verdicts") as step:
+        async with self._thinking(
+            "Weighing the evidence and writing verdicts", input_chars=sum(len(str(m.content)) for m in messages)
+        ) as step:
             out: VerificationOutput = await self.llm.with_structured_output(VerificationOutput).ainvoke(
                 _without_thinking(messages)
             )
