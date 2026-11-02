@@ -1,0 +1,204 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1250 1500" width="1250" height="1500" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+<title>Architecture of the agentic YouTube analyzer and fact-checker</title>
+<defs>
+<marker id="ah-15803d" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker>
+<marker id="ah-1d4ed8" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/></marker>
+<marker id="ah-475569" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="ah-6d28d9" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6d28d9"/></marker>
+<marker id="ah-b91c1c" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/></marker>
+<marker id="ah-c2410c" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/></marker>
+</defs>
+<rect width="1250" height="1500" fill="#fbfaf7"/>
+<rect x="8" y="8" width="1234" height="1484" rx="10" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="625.0" y="58" font-size="32" font-weight="700" fill="#1e293b" text-anchor="middle" >How the YouTube Fact-Checking Agent Works</text>
+<text x="625.0" y="88" font-size="15" font-weight="400" fill="#475569" text-anchor="middle" >From a video link to a topic-by-topic summary and a source-linked fact check</text>
+<rect x="325" y="118" width="300" height="56" rx="12" fill="#f1f5f9" stroke="#475569" stroke-width="2" opacity="1"/>
+<circle cx="355" cy="139" r="6" fill="none" stroke="#475569" stroke-width="2"/><path d="M344 158 q11 -16 22 0" fill="none" stroke="#475569" stroke-width="2"/>
+<text x="380" y="142" font-size="14" font-weight="700" fill="#1e293b" text-anchor="start" >Input: YouTube video link</text>
+<text x="380" y="160" font-size="11" font-weight="400" fill="#475569" text-anchor="start" >Web UI  ·  REST API  ·  live SSE stream</text>
+<path d="M475,174 L475,202" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#ah-475569)"/>
+<rect x="325" y="202" width="300" height="56" rx="12" fill="#f1f5f9" stroke="#475569" stroke-width="2" opacity="1"/>
+<text x="475" y="226" font-size="14" font-weight="700" fill="#1e293b" text-anchor="middle" >FastAPI backend</text>
+<text x="475" y="244" font-size="11" font-weight="400" fill="#475569" text-anchor="middle" >app/main.py  ·  streams progress as events</text>
+<path d="M475,258 L475,286" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#ah-475569)"/>
+<polygon points="475,286 575,328 475,370 375,328" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+<text x="475" y="332" font-size="13" font-weight="700" fill="#1e293b" text-anchor="middle" >Report saved?</text>
+<text x="583" y="322" font-size="11" font-weight="700" fill="#b45309" text-anchor="start" >YES</text>
+<text x="483" y="392" font-size="11" font-weight="700" fill="#b45309" text-anchor="start" >NO, or Re-run</text>
+<rect x="620" y="303" width="140" height="50" rx="12" fill="#f1f5f9" stroke="#475569" stroke-width="2" opacity="1"/>
+<text x="690" y="325" font-size="12" font-weight="700" fill="#1e293b" text-anchor="middle" >Show saved report</text>
+<text x="690" y="341" font-size="10.5" font-weight="400" fill="#475569" text-anchor="middle" >instantly, no model calls</text>
+<path d="M575,328 L620,328" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#ah-475569)"/>
+<path d="M760,328 L1228,328 L1228,1000 L1203,1000" fill="none" stroke="#475569" stroke-width="2.2" stroke-dasharray="6 5" marker-end="url(#ah-475569)"/>
+<text x="1000" y="320" font-size="10.5" font-weight="400" fill="#475569" text-anchor="middle" >saved report is served straight to the UI</text>
+<path d="M475,370 L475,402" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#ah-475569)"/>
+<rect x="190" y="402" width="570" height="684" rx="16" fill="#faf8ff" stroke="#6d28d9" stroke-width="1.8" stroke-dasharray="8 6" opacity="1"/>
+<text x="206" y="424" font-size="13" font-weight="700" fill="#6d28d9" text-anchor="start" >LangGraph agent</text>
+<text x="318" y="424" font-size="12" font-weight="400" fill="#475569" text-anchor="start" >claude-haiku-5-5  ·  5 steps, with a retry loop</text>
+<rect x="250" y="440" width="450" height="72" rx="12" fill="#d9f5ef" stroke="#0f766e" stroke-width="2" opacity="1"/>
+<circle cx="274" cy="466" r="13" fill="#0f766e"/>
+<text x="274" y="470.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle" >1</text>
+<text x="298" y="471" font-size="15" font-weight="700" fill="#1e293b" text-anchor="start" >Triage</text>
+<rect x="622.8" y="450" width="67.2" height="18" rx="9" fill="#0f766e"/>
+<text x="656.4" y="462.5" font-size="10" font-weight="700" fill="#fff" text-anchor="middle" letter-spacing=".6">PERCEIVE</text>
+<text x="266" y="492" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Video details from the YouTube Data API, plus the channel&#x27;s track record</text>
+<text x="266" y="507.525" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >from past runs.</text>
+<path d="M475,512 L475,536" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#ah-475569)"/>
+<rect x="250" y="536" width="450" height="108" rx="12" fill="#d9f5ef" stroke="#0f766e" stroke-width="2" opacity="1"/>
+<circle cx="274" cy="562" r="13" fill="#0f766e"/>
+<text x="274" y="566.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle" >2</text>
+<text x="298" y="567" font-size="15" font-weight="700" fill="#1e293b" text-anchor="start" >Extraction</text>
+<rect x="622.8" y="546" width="67.2" height="18" rx="9" fill="#0f766e"/>
+<text x="656.4" y="558.5" font-size="10" font-weight="700" fill="#fff" text-anchor="middle" letter-spacing=".6">PERCEIVE</text>
+<text x="266" y="588" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Transcript: scraper first, Supadata fallback, cached. Top 100 comments</text>
+<text x="266" y="603.525" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >with their replies, from the official API.</text>
+<text x="266" y="619.05" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Two model calls in parallel: video summary + claims to check, and useful</text>
+<text x="266" y="634.5749999999999" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >points from comments.</text>
+<path d="M475,644 L475,668" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#ah-475569)"/>
+<rect x="250" y="668" width="450" height="100" rx="12" fill="#ede9fe" stroke="#6d28d9" stroke-width="2" opacity="1"/>
+<circle cx="274" cy="694" r="13" fill="#6d28d9"/>
+<text x="274" y="698.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle" >3</text>
+<text x="298" y="699" font-size="15" font-weight="700" fill="#1e293b" text-anchor="start" >Investigator</text>
+<rect x="603.6" y="678" width="86.4" height="18" rx="9" fill="#6d28d9"/>
+<text x="646.8" y="690.5" font-size="10" font-weight="700" fill="#fff" text-anchor="middle" letter-spacing=".6">THINK + ACT</text>
+<text x="266" y="720" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >A model-driven tool loop that states its reasoning before each call.</text>
+<text x="266" y="735.525" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >A verdict needs a source link, otherwise it stays Unverified.</text>
+<path d="M475,768 L475,790" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#ah-475569)"/>
+<polygon points="475,790 575,830 475,870 375,830" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+<text x="475" y="828" font-size="13" font-weight="700" fill="#1e293b" text-anchor="middle" >Weak or unverified</text>
+<text x="475" y="844" font-size="10.5" font-weight="400" fill="#475569" text-anchor="middle" >high / medium claims?</text>
+<path d="M375,830 L222,830 L222,718 L249,718" fill="none" stroke="#6d28d9" stroke-width="2.2" marker-end="url(#ah-6d28d9)"/>
+<text x="210" y="780" font-size="11" font-weight="700" fill="#6d28d9" text-anchor="middle" transform="rotate(-90 210 780)">YES: sharper queries, max 2 retries</text>
+<text x="483" y="886" font-size="11" font-weight="700" fill="#b45309" text-anchor="start" >NO</text>
+<path d="M475,870 L475,902" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#ah-475569)"/>
+<rect x="250" y="902" width="450" height="80" rx="12" fill="#e0e7ff" stroke="#4338ca" stroke-width="2" opacity="1"/>
+<circle cx="274" cy="928" r="13" fill="#4338ca"/>
+<text x="274" y="932.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle" >4</text>
+<text x="298" y="933" font-size="15" font-weight="700" fill="#1e293b" text-anchor="start" >Synthesis</text>
+<rect x="642.0" y="912" width="48.0" height="18" rx="9" fill="#4338ca"/>
+<text x="666.0" y="924.5" font-size="10" font-weight="700" fill="#fff" text-anchor="middle" letter-spacing=".6">WRITE</text>
+<text x="266" y="954" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >One short paragraph per topic, in plain first-party voice, from the</text>
+<text x="266" y="969.525" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >transcript, the evidence and the comments.</text>
+<path d="M475,982 L475,1006" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#ah-475569)"/>
+<rect x="250" y="1006" width="450" height="70" rx="12" fill="#e0f2fe" stroke="#0369a1" stroke-width="2" opacity="1"/>
+<circle cx="274" cy="1032" r="13" fill="#0369a1"/>
+<text x="274" y="1036.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle" >5</text>
+<text x="298" y="1037" font-size="15" font-weight="700" fill="#1e293b" text-anchor="start" >Commit and report</text>
+<rect x="648.4" y="1016" width="41.6" height="18" rx="9" fill="#0369a1"/>
+<text x="669.2" y="1028.5" font-size="10" font-weight="700" fill="#fff" text-anchor="middle" letter-spacing=".6">SAVE</text>
+<text x="266" y="1058" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Builds the report, saves it to ClickHouse and stores it for reuse.</text>
+<path d="M475,1086 L475,1138" fill="none" stroke="#15803d" stroke-width="2.2" marker-end="url(#ah-15803d)"/>
+<text x="485" y="1118" font-size="11" font-weight="700" fill="#15803d" text-anchor="start" >tool calls over MCP (stdio)</text>
+<rect x="190" y="1138" width="570" height="168" rx="14" fill="#f4fdf6" stroke="#15803d" stroke-width="1.6" stroke-dasharray="8 6" opacity="1"/>
+<text x="206" y="1160" font-size="13" font-weight="700" fill="#15803d" text-anchor="start" >Tool layer: four MCP servers</text>
+<rect x="200" y="1172" width="130" height="122" rx="10" fill="#ffffff" stroke="#15803d" stroke-width="1.5" opacity="1"/>
+<text x="210" y="1192" font-size="11.5" font-weight="700" fill="#1e293b" text-anchor="start" >youtube-mcp</text>
+<text x="210" y="1206" font-size="10" font-weight="600" fill="#15803d" text-anchor="start" >Python</text>
+<text x="210" y="1222" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >YouTube Data API,</text>
+<text x="210" y="1236.175" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >transcript scraper,</text>
+<text x="210" y="1250.35" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >Supadata fallback,</text>
+<text x="210" y="1264.5249999999999" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >disk cache</text>
+<rect x="338" y="1172" width="130" height="122" rx="10" fill="#ffffff" stroke="#15803d" stroke-width="1.5" opacity="1"/>
+<text x="348" y="1192" font-size="11.5" font-weight="700" fill="#1e293b" text-anchor="start" >verify-social-mcp</text>
+<text x="348" y="1206" font-size="10" font-weight="600" fill="#15803d" text-anchor="start" >Go</text>
+<text x="348" y="1222" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >Tavily web search,</text>
+<text x="348" y="1236.175" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >Hacker News, Bluesky,</text>
+<text x="348" y="1250.35" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >Stack Exchange</text>
+<rect x="476" y="1172" width="130" height="122" rx="10" fill="#ffffff" stroke="#15803d" stroke-width="1.5" opacity="1"/>
+<text x="486" y="1192" font-size="11.5" font-weight="700" fill="#1e293b" text-anchor="start" >sandbox-mcp</text>
+<text x="486" y="1206" font-size="10" font-weight="600" fill="#15803d" text-anchor="start" >Go</text>
+<text x="486" y="1222" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >Runs Python audits</text>
+<text x="486" y="1236.175" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >for numeric claims in</text>
+<text x="486" y="1250.35" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >a locked-down Docker</text>
+<text x="486" y="1264.5249999999999" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >container</text>
+<rect x="614" y="1172" width="130" height="122" rx="10" fill="#ffffff" stroke="#15803d" stroke-width="1.5" opacity="1"/>
+<text x="624" y="1192" font-size="11.5" font-weight="700" fill="#1e293b" text-anchor="start" >memory-db-mcp</text>
+<text x="624" y="1206" font-size="10" font-weight="600" fill="#15803d" text-anchor="start" >Go</text>
+<text x="624" y="1222" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >ClickHouse: channel</text>
+<text x="624" y="1236.175" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >history, earlier</text>
+<text x="624" y="1250.35" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >verdicts, saving</text>
+<text x="624" y="1264.5249999999999" font-size="10.5" font-weight="400" fill="#475569" text-anchor="start" >analyses</text>
+<rect x="800" y="402" width="400" height="340" rx="14" fill="#ffedd5" stroke="#c2410c" stroke-width="2" opacity="1"/>
+<text x="822" y="432" font-size="16" font-weight="700" fill="#9a3412" text-anchor="start" >Memory and caches</text>
+<text x="822" y="460" font-size="12.5" font-weight="700" fill="#c2410c" text-anchor="start" >Short-term (one request)</text>
+<text x="822" y="478" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Agent state: transcript, claims, verdicts, comment insights,</text>
+<text x="822" y="493.525" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >topics.</text>
+<text x="822" y="510.04999999999995" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Per-request JSONL log of every step.</text>
+<text x="822" y="548" font-size="12.5" font-weight="700" fill="#c2410c" text-anchor="start" >Long-term (kept between runs)</text>
+<text x="822" y="566" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >ClickHouse: channel track record and every verified claim.</text>
+<text x="822" y="582.525" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Saved reports, reused until you press Re-run.</text>
+<text x="822" y="599.05" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Caches: transcripts 30 days, video details 6 hours, so YouTube</text>
+<text x="822" y="614.5749999999999" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >is hit once per video.</text>
+<text x="822" y="631.0999999999999" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Transcripts: scraper first; Supadata (several keys in</text>
+<text x="822" y="646.6249999999999" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >rotation) when YouTube blocks it.</text>
+<path d="M760,600 L798,600" fill="none" stroke="#c2410c" stroke-width="2.2" marker-end="url(#ah-c2410c)" marker-start="url(#ah-c2410c)"/>
+<rect x="800" y="800" width="400" height="286" rx="14" fill="#cffafe" stroke="#0e7490" stroke-width="2" opacity="1"/>
+<text x="822" y="830" font-size="16" font-weight="700" fill="#0e7490" text-anchor="start" >Output: web UI report</text>
+<text x="822" y="858" font-size="12.5" font-weight="700" fill="#0e7490" text-anchor="start" >Header strip</text>
+<text x="822" y="876" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Category, clickbait level (No / Medium / High), percent of</text>
+<text x="822" y="891.525" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >facts correct, paid-promotion flag.</text>
+<text x="822" y="919.05" font-size="12.5" font-weight="700" fill="#0e7490" text-anchor="start" >Summary tab</text>
+<text x="822" y="937.05" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Topic-by-topic paragraphs in plain voice, with the sources</text>
+<text x="822" y="952.5749999999999" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >each one used.</text>
+<text x="822" y="980.0999999999999" font-size="12.5" font-weight="700" fill="#0e7490" text-anchor="start" >Fact check tab</text>
+<text x="822" y="998.0999999999999" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Every checked claim: time, Correct / Doubtful / False, source</text>
+<text x="822" y="1013.6249999999999" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >links.</text>
+<text x="822" y="1041.1499999999999" font-size="12.5" font-weight="700" fill="#0e7490" text-anchor="start" >Agent activity</text>
+<text x="822" y="1059.1499999999999" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >Live steps with the model&#x27;s reasoning, and a developer trace</text>
+<text x="822" y="1074.675" font-size="11.5" font-weight="400" fill="#475569" text-anchor="start" >of every call.</text>
+<path d="M700,1041 L798,1041" fill="none" stroke="#0e7490" stroke-width="2.2" marker-end="url(#ah-0e7490)"/>
+<rect x="24" y="402" width="150" height="904" rx="14" fill="#fee2e2" stroke="#b91c1c" stroke-width="2" opacity="1"/>
+<text x="99" y="436" font-size="16" font-weight="700" fill="#991b1b" text-anchor="middle" >Guardrails</text>
+<text x="99" y="456" font-size="16" font-weight="700" fill="#991b1b" text-anchor="middle" >and safety</text>
+<text x="38" y="488" font-size="11.5" font-weight="700" fill="#991b1b" text-anchor="start" >No source, no verdict</text>
+<text x="38" y="503" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >A verdict with no</text>
+<text x="38" y="517.175" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >source link is forced</text>
+<text x="38" y="531.3499999999999" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >back to Unverified.</text>
+<text x="38" y="555.5249999999999" font-size="11.5" font-weight="700" fill="#991b1b" text-anchor="start" >No invented links</text>
+<text x="38" y="570.5249999999999" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >A topic can only cite</text>
+<text x="38" y="584.6999999999998" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >sources that were</text>
+<text x="38" y="598.8749999999998" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >actually gathered;</text>
+<text x="38" y="613.0499999999997" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >others are dropped.</text>
+<text x="38" y="637.2249999999997" font-size="11.5" font-weight="700" fill="#991b1b" text-anchor="start" >Official APIs only</text>
+<text x="38" y="652.2249999999997" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >Comments come from the</text>
+<text x="38" y="666.3999999999996" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >YouTube Data API; no</text>
+<text x="38" y="680.5749999999996" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >scraping of comments.</text>
+<text x="38" y="704.7499999999995" font-size="11.5" font-weight="700" fill="#991b1b" text-anchor="start" >Sandboxed code</text>
+<text x="38" y="719.7499999999995" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >Python audits run in</text>
+<text x="38" y="733.9249999999995" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >Docker: no network,</text>
+<text x="38" y="748.0999999999995" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >read-only disk, memory</text>
+<text x="38" y="762.2749999999994" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >limit.</text>
+<text x="38" y="786.4499999999994" font-size="11.5" font-weight="700" fill="#991b1b" text-anchor="start" >Safe rendering</text>
+<text x="38" y="801.4499999999994" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >All model text is HTML-</text>
+<text x="38" y="815.6249999999993" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >escaped; links are</text>
+<text x="38" y="829.7999999999993" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >limited to http(s).</text>
+<text x="38" y="853.9749999999992" font-size="11.5" font-weight="700" fill="#991b1b" text-anchor="start" >Clean failures</text>
+<text x="38" y="868.9749999999992" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >Aborted runs are never</text>
+<text x="38" y="883.1499999999992" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >saved. A bad model</text>
+<text x="38" y="897.3249999999991" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >answer is retried once</text>
+<text x="38" y="911.4999999999991" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >with the error shown to</text>
+<text x="38" y="925.674999999999" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >it.</text>
+<text x="38" y="949.849999999999" font-size="11.5" font-weight="700" fill="#991b1b" text-anchor="start" >Bounded cost</text>
+<text x="38" y="964.849999999999" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >Claims, tool rounds,</text>
+<text x="38" y="979.024999999999" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >retries and comment</text>
+<text x="38" y="993.1999999999989" font-size="10.5" font-weight="400" fill="#7f1d1d" text-anchor="start" >text are all capped.</text>
+<path d="M174,480 L188,480" fill="none" stroke="#b91c1c" stroke-width="2.2" marker-end="url(#ah-b91c1c)"/>
+<rect x="190" y="1330" width="1010" height="118" rx="14" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2" opacity="1"/>
+<circle cx="216" cy="1358" r="13" fill="#1d4ed8"/>
+<text x="216" y="1362.5" font-size="13" font-weight="700" fill="#fff" text-anchor="middle" >6</text>
+<text x="240" y="1363" font-size="15" font-weight="700" fill="#1e3a8a" text-anchor="start" >Observe: you can see exactly what the agent did</text>
+<text x="210" y="1392" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="start" >Steps tab</text>
+<text x="210" y="1408" font-size="10.5" font-weight="400" fill="#1e3a8a" text-anchor="start" >Plain-language timeline with the model&#x27;s</text>
+<text x="210" y="1422.175" font-size="10.5" font-weight="400" fill="#1e3a8a" text-anchor="start" >reasoning before each tool call.</text>
+<text x="460" y="1392" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="start" >Developer trace</text>
+<text x="460" y="1408" font-size="10.5" font-weight="400" fill="#1e3a8a" text-anchor="start" >Every tool call with its arguments and</text>
+<text x="460" y="1422.175" font-size="10.5" font-weight="400" fill="#1e3a8a" text-anchor="start" >result, every model call, with timings.</text>
+<text x="460" y="1436.35" font-size="10.5" font-weight="400" fill="#1e3a8a" text-anchor="start" >Copyable.</text>
+<text x="710" y="1392" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="start" >Request logs</text>
+<text x="710" y="1408" font-size="10.5" font-weight="400" fill="#1e3a8a" text-anchor="start" >One JSONL file per run in logs/, read with</text>
+<text x="710" y="1422.175" font-size="10.5" font-weight="400" fill="#1e3a8a" text-anchor="start" >scripts/show_log.py.</text>
+<text x="960" y="1392" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="start" >Tests</text>
+<text x="960" y="1408" font-size="10.5" font-weight="400" fill="#1e3a8a" text-anchor="start" >Automated tests for the agent, report and</text>
+<text x="960" y="1422.175" font-size="10.5" font-weight="400" fill="#1e3a8a" text-anchor="start" >API, plus live runs on real videos.</text>
+<text x="625.0" y="1478" font-size="12" font-weight="400" fill="#475569" text-anchor="middle" >Built with LangGraph  ·  MCP  ·  FastAPI  ·  ClickHouse  ·  Docker  ·  Claude Haiku 5.5</text>
+</svg>
