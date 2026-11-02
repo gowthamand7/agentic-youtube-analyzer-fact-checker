@@ -1,0 +1,33 @@
+# Environment & Secrets
+.env
+*.env
+!.env.example
+
+# Compiled Go binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Python & UV
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Superpowers SDD workspace
+.superpowers/
+
+# ClickHouse local data
+clickhouse_data/
+clickhouse_logs/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
