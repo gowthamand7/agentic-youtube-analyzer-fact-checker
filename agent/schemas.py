@@ -117,3 +117,20 @@ class WeakClaim(BaseModel):
 
 class CriticOutput(BaseModel):
     weak_claims: List[WeakClaim]
+
+
+class Topic(BaseModel):
+    title: str = Field(description="Short reader-facing name of the topic, e.g. 'How the cache invalidates'.")
+    timestamp: str = Field(description="MM:SS in the video where the host starts on this topic; copy one that appears in the transcript.")
+    summary: str = Field(
+        description="One comprehensive paragraph (4-7 sentences, plain prose, no bullet points) on this topic, written for someone who "
+        "will not watch the video. Weave together what the host said, what the web evidence confirms or contradicts, and what the "
+        "viewer comments add."
+    )
+    source_urls: List[str] = Field(
+        default_factory=list, description="URLs from the provided evidence that this paragraph relied on. Never invent a URL."
+    )
+
+
+class SynthesisOutput(BaseModel):
+    topics: List[Topic] = Field(description="Every distinct topic the video discusses, in video order.")

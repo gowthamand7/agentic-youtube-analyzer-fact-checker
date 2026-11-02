@@ -25,7 +25,7 @@ def _after_ingest(next_node: str):
 
 
 def _after_critic(state: AgentState) -> str:
-    return "investigator" if state.get("critic_feedback") else "commit_and_report"
+    return "investigator" if state.get("critic_feedback") else "synthesis"
 
 
 def build_graph(tools: Mapping[str, Any], llm: Any):
@@ -35,13 +35,15 @@ def build_graph(tools: Mapping[str, Any], llm: Any):
     g.add_node("extraction", n.extraction_node)
     g.add_node("investigator", n.investigator_node)
     g.add_node("critic", n.critic_node)
+    g.add_node("synthesis", n.synthesis_node)
     g.add_node("commit_and_report", n.commit_and_report_node)
 
     g.add_edge(START, "triage")
     g.add_conditional_edges("triage", _after_ingest("extraction"), ["extraction", "commit_and_report"])
     g.add_conditional_edges("extraction", _after_ingest("investigator"), ["investigator", "commit_and_report"])
     g.add_edge("investigator", "critic")
-    g.add_conditional_edges("critic", _after_critic, ["investigator", "commit_and_report"])
+    g.add_conditional_edges("critic", _after_critic, ["investigator", "synthesis"])
+    g.add_edge("synthesis", "commit_and_report")
     g.add_edge("commit_and_report", END)
     return g.compile()
 

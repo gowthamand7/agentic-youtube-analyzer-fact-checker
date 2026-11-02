@@ -23,19 +23,22 @@ from agent.report import (
     TRANSCRIPT_ERROR,
     build_report,
     build_save_payload,
+    clean_outside_discussion,
     compute_accuracy_score,
     enforce_evidence,
     render_error_report,
     render_markdown,
 )
-from agent.schemas import CommentsAnalysis, CriticOutput, VerificationOutput, VideoAnalysis
+from agent.schemas import CommentsAnalysis, CriticOutput, SynthesisOutput, VerificationOutput, VideoAnalysis
 from agent.state import MAX_RETRIES, AgentState
 
 INVESTIGATION_TOOLS = ("search_web_factcheck", "search_social_reactions", "execute_python_audit", "query_historical_claims")
 MAX_TOOL_ROUNDS = 6
 MAX_TRANSCRIPT_CHARS = 150_000
 MAX_TOOL_RESULT_CHARS = 8_000
-COMMENTS_FOR_PROMPT = 40
+COMMENTS_FETCHED = 100  # top-level comments requested (one API page); their replies come with them
+REPLIES_PER_COMMENT = 3  # most-liked replies shown to the model per comment
+MAX_COMMENT_CHARS = 60_000  # comments arrive best-first, so the least relevant ones are what gets cut
 
 
 def emit(event: Dict[str, Any]) -> None:
@@ -80,6 +83,29 @@ def _ai_text(ai: AIMessage) -> str:
     if isinstance(ai.content, str):
         return ai.content.strip()
     return "".join(b.get("text", "") for b in ai.content if isinstance(b, dict) and b.get("type") == "text").strip()
+
+
+def format_comments(comments: List[Dict[str, Any]]) -> List[str]:
+    """One text block per comment thread: the comment, then its most-liked replies indented beneath it."""
+
+    def line(c: Dict[str, Any], limit: int) -> str:
+        creator = " (CREATOR)" if c.get("is_creator") else ""
+        return f"{c['author']}{creator} [{c['likes']} likes]: {_clip(' '.join(c['text'].split()), limit)}"
+
+    blocks, used = [], 0
+    for c in comments:
+        replies = sorted(c.get("replies") or [], key=lambda r: r.get("likes", 0), reverse=True)[:REPLIES_PER_COMMENT]
+        block = "\n".join([f"- {line(c, 400)}"] + [f"  > {line(r, 250)}" for r in replies])
+        if used + len(block) > MAX_COMMENT_CHARS:
+            break
+        blocks.append(block)
+        used += len(block)
+    return blocks
+
+
+def topic_cap(duration_sec: int) -> int:
+    """How many topic paragraphs to write: about one per 3 minutes of video, 3 to 10."""
+    return max(3, min(10, 2 + int(duration_sec // 180)))
 
 
 def claim_cap(segments: List[Dict[str, Any]]) -> int:
@@ -191,17 +217,13 @@ class AgentNodes:
                 return {"error_message": transcript.get("message", TRANSCRIPT_ERROR)}
             return {"error_message": TRANSCRIPT_ERROR}
         comments = await self._call(
-            "get_comments", {"video_id": video_id, "max_results": 60, "sort_by": "top", "channel_id": meta["channel_id"]}
+            "get_comments", {"video_id": video_id, "max_results": COMMENTS_FETCHED, "sort_by": "top", "channel_id": meta["channel_id"]}
         )
 
         transcript_text = _clip(
             "\n".join(f"[{s['timestamp']}] {s['text']}" for s in transcript["segments"]), MAX_TRANSCRIPT_CHARS
         )
-        comment_lines = []
-        if isinstance(comments, dict):
-            for c in comments.get("comments", [])[:COMMENTS_FOR_PROMPT]:
-                creator = " (CREATOR)" if c.get("is_creator") else ""
-                comment_lines.append(f"- {c['author']}{creator} [{c['likes']} likes]: {_clip(c['text'], 500)}")
+        comment_lines = format_comments(comments.get("comments", [])) if isinstance(comments, dict) else []
         history = state.get("channel_history", {})
         brief = {
             "title": meta["title"],
@@ -247,6 +269,7 @@ class AgentNodes:
             emit({"type": "comments", "insights": insights})
         return {
             "transcript_summary": summary,
+            "transcript_text": transcript_text,
             "extracted_claims": claims,
             "comment_insights": insights,
             "metadata": {**meta, "video_type": analysis.video_type},
@@ -275,7 +298,7 @@ class AgentNodes:
                     [SystemMessage(content=prompts.COMMENTS_SYSTEM), HumanMessage(content=human)]
                 )
                 step["output"] = out.model_dump_json()
-                n = len(out.insights)
+                n = sum(c.adds_information for c in out.insights)
                 step["summary"] = f"{n} comment{'s' if n != 1 else ''} added information" if n else "No comments added information"
             return out
         except Exception:  # the comments are a bonus; never fail the analysis over them
@@ -404,6 +427,55 @@ class AgentNodes:
         return {"critic_feedback": feedback, "retry_count": retry + 1}
 
     # ---- Node 5 -------------------------------------------------------------------------------
+    async def synthesis_node(self, state: AgentState) -> Dict[str, Any]:
+        """Write the topic-by-topic summary from the transcript, the fact-check evidence, web discussion and comments."""
+        emit({"type": "node_start", "node": "synthesis"})
+        summary = state.get("transcript_summary", {})
+        results = state.get("verification_results", [])
+        outside = clean_outside_discussion(state.get("community_insights", []))
+        cap = topic_cap(state.get("metadata", {}).get("duration_sec", 0) or 0)
+        evidence = [{k: r.get(k) for k in ("timestamp", "claim", "verdict", "evidence", "sources")} for r in results]
+        comments = [{k: c[k] for k in ("author", "likes", "category", "detail")} for c in state.get("comment_insights", [])]
+        web = [{k: o[k] for k in ("source", "url", "category", "detail")} for o in outside]
+        sections = [
+            f"VIDEO: {state['metadata']['title']} (type: {summary.get('video_type', 'other')})\n"
+            f"Short summary: {summary.get('tldr', '')}\n\nWrite between {max(3, cap - 2)} and {cap} topics.",
+            f"FACT-CHECK RESULTS:\n{json.dumps(evidence, ensure_ascii=False)}",
+        ]
+        if web:  # empty sections are left out entirely, or the model writes sentences about their absence
+            sections.append(f"WEB DISCUSSION:\n{json.dumps(web, ensure_ascii=False)}")
+        if comments:
+            sections.append(f"USEFUL POINTS FROM VIEWER COMMENTS AND REPLIES:\n{json.dumps(comments, ensure_ascii=False)}")
+        sections.append(f"TRANSCRIPT:\n{state.get('transcript_text', '')}")
+        human = "\n\n".join(sections)
+        allowed = {u for r in results for u in r.get("sources", [])} | {o["url"] for o in outside}
+        topics: List[Dict[str, Any]] = []
+        try:
+            async with self._thinking(
+                "Writing the topic-by-topic summary", "combining the video, the web evidence and the comments", input_chars=len(human)
+            ) as step:
+                step["prompt_chars"], step["prompt"] = len(human), human
+                out: SynthesisOutput = await self._structured(
+                    SynthesisOutput, [SystemMessage(content=prompts.SYNTHESIS_SYSTEM), HumanMessage(content=human)]
+                )
+                step["output"] = out.model_dump_json()
+                topics = [
+                    {**t.model_dump(), "source_urls": [u for u in t.source_urls if u in allowed]}
+                    for t in out.topics
+                    if t.summary.strip() and t.title.strip()
+                ]
+                step["summary"] = f"{len(topics)} topic{'s' if len(topics) != 1 else ''}"
+        except Exception:
+            topics = []
+        if not topics:  # the model failed: fall back to the key ideas so the report still has a body
+            emit({"type": "note", "text": "The topic summary could not be written, so the key ideas are shown instead."})
+            topics = [
+                {"title": kp["concept"], "timestamp": kp["timestamp"], "summary": kp["point"], "source_urls": []}
+                for kp in summary.get("key_points", [])
+            ]
+        return {"topics": topics}
+
+    # ---- Node 6 -------------------------------------------------------------------------------
     async def commit_and_report_node(self, state: AgentState) -> Dict[str, Any]:
         emit({"type": "node_start", "node": "report"})
         if state.get("error_message"):

@@ -22,6 +22,8 @@ from agent.schemas import (
     ExtraSection,
     KeyPoint,
     SponsorMention,
+    SynthesisOutput,
+    Topic,
     VerificationOutput,
     VideoAnalysis,
     WeakClaim,
@@ -143,13 +145,13 @@ async def test_happy_path_scores_and_commits():
     assert state["overall_accuracy_score"] == 35
     assert state["saved_to_memory"] is True
     md = state["final_report_md"]
-    assert "## What you'll learn" in md and "## What's wrong or doubtful" in md and "## From the comments" in md
-    assert "Library X is 4x faster than Y." in md and "NordVPN" in md and "Steps to follow" in md
+    assert "## Summary" in md and "## Fact check" in md and "## Before you watch" in md
+    assert "Library X is 4x faster than Y." in md and "NordVPN" in md
     assert state["report"]["reliability"]["contradicted"] == 1
     saved = json.loads(next(a for n, a in calls if n == "save_video_analysis")["payload_json"])
     assert saved["channel_id"] == "UC1" and saved["overall_accuracy_score"] == 35
     assert saved["sponsors"] == ["NordVPN"] and saved["analysis_payload"]["claims_verified"][0]["verdict"] == "Partially False"
-    assert [e["node"] for e in events if e["type"] == "node_end"] == ["triage", "extraction", "investigator", "critic", "commit_and_report"]
+    assert [e["node"] for e in events if e["type"] == "node_end"] == ["triage", "extraction", "investigator", "critic", "synthesis", "commit_and_report"]
     assert any(e["type"] == "tool_start" and e["tool"] == "search_web_factcheck" for e in events)
 
 
@@ -447,7 +449,9 @@ async def test_report_carries_structure_comments_and_importance():
     llm = FakeLLM({VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
     events, state = await run(build_graph(make_tools([]), llm))
     report = state["report"]
-    assert report["version"] == 2 and report["video_type"] == "tutorial"
+    assert report["version"] == 3 and report["video_type"] == "tutorial"
+    assert [t["title"] for t in report["topics"]] == ["X result caching", "X vs Y speed"]  # no synthesis output scripted: key ideas stand in
+    assert any(e["type"] == "note" and "topic summary could not be written" in e["text"] for e in events)
     assert report["summary"]["key_points"][1]["check"]["verdict"] == "Partially False"
     assert report["comments"][0]["author"] == "@dev" and report["extras"][0]["kind"] == "steps"
     summary_event = next(e for e in events if e["type"] == "summary")
@@ -554,3 +558,72 @@ def test_describe_end_names_the_supadata_fallback():
         True, "2 lines (en) via Supadata fallback (YouTube blocked the scraper)")
     assert describe_end("get_transcript", {**base, "fallback_for": "TRANSCRIPT_ERROR", "cached": True}) == (
         True, "2 lines (en) via Supadata fallback (the scraper failed) (cached)")
+
+
+TOPICS = SynthesisOutput(
+    topics=[
+        Topic(title="The speed claim", timestamp="04:32", summary="The host says X is 4x faster, but benchmarks show about 1.4x.",
+              source_urls=["https://docs.x/bench", "https://invented.example/nope"]),
+        Topic(title="Empty", timestamp="05:00", summary="   ", source_urls=[]),
+    ]
+)
+
+
+class SpyLLM(FakeLLM):
+    """FakeLLM that also records the messages sent for each structured schema."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.sent: Dict[type, str] = {}
+
+    def with_structured_output(self, schema):
+        inner = super().with_structured_output(schema)
+        llm = self
+
+        class _S:
+            async def ainvoke(self, messages):
+                llm.sent[schema] = "\n".join(str(m.content) for m in messages)
+                return await inner.ainvoke(messages)
+
+        return _S()
+
+
+def full_llm(synthesis):
+    return SpyLLM({
+        VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])],
+        CriticOutput: [CriticOutput(weak_claims=[])], SynthesisOutput: [synthesis],
+    })
+
+
+async def test_synthesis_writes_topics_from_transcript_evidence_and_comments_and_drops_invented_urls():
+    llm = full_llm(TOPICS)
+    _, state = await run(build_graph(make_tools([]), llm))
+    assert [t["title"] for t in state["topics"]] == ["The speed claim"]  # the blank paragraph is dropped
+    assert state["topics"][0]["source_urls"] == ["https://docs.x/bench"]  # a URL no tool returned never reaches the report
+    prompt = llm.sent[SynthesisOutput]
+    assert "4x faster" in prompt  # transcript
+    assert "1.4x average." in prompt and "https://docs.x/bench" in prompt  # fact-check evidence and its source
+    assert "legacy-peer-deps" in prompt  # useful point from the comments
+    md = state["final_report_md"]
+    assert "### The speed claim" in md and "[1](https://docs.x/bench)" in md
+
+
+async def test_synthesis_failure_falls_back_to_key_ideas_and_does_not_fail_the_run():
+    llm = full_llm(RuntimeError("model down"))
+    _, state = await run(build_graph(make_tools([]), llm))
+    assert state["saved_to_memory"] is True and not state.get("error_message")
+    assert [t["summary"] for t in state["topics"]] == [kp.point for kp in ANALYSIS.key_points]
+
+
+async def test_hundred_comments_with_replies_are_fetched_and_shown_to_the_model():
+    calls: List = []
+    comments = {"status": "OK", "comments": [
+        {"author": "@dev", "text": "use --legacy-peer-deps", "likes": 5, "is_creator": False, "replies": [
+            {"author": "@helper", "text": "that fixed it for me on Node 22", "likes": 2, "is_creator": False},
+        ]},
+    ]}
+    llm = full_llm(TOPICS)
+    await run(build_graph(make_tools(calls, {"get_comments": comments}), llm))
+    args = next(a for n, a in calls if n == "get_comments")
+    assert args["max_results"] == 100 and args["sort_by"] == "top"
+    assert "  > @helper [2 likes]: that fixed it for me on Node 22" in llm.sent[CommentsAnalysis]

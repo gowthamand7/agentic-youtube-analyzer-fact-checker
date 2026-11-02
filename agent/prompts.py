@@ -45,7 +45,7 @@ A comment about the video or channel itself is NOT information: audio tracks or 
 "this clarified my doubt", "I built something after watching", requests for courses or topics, thanks, questions, \
 personal anecdotes unrelated to the topic. Set adds_information=false for those. When in doubt, leave the comment out.
 
-Skip praise, jokes, greetings, self-promotion and anything vague. Use the commenter's handle exactly as \
+Comments appear with their replies indented beneath them as "  > reply". Treat a thread as one conversation: a reply can correct, confirm or add to the comment above it, and the useful part may be in the reply (use the replier's handle then). Skip praise, jokes, greetings, self-promotion and anything vague. Use the commenter's handle exactly as \
 given and copy their like count. Give each insight a 2-6 word canonical `concept`. If nothing adds information, \
 return an empty list. Never invent comments."""
 
@@ -85,3 +85,17 @@ VERIFICATION_FINAL = (
 CRITIC_SYSTEM = f"""You are a critic reviewing weak fact-check results (Unverified, low confidence, or missing \
 sources). For each, write a better, more specific web search query in English (different keywords, include \
 entity names, numbers, years, or official-source hints). {LANGUAGE_POLICY}"""
+
+
+SYNTHESIS_SYSTEM = f"""You write the topic-by-topic summary of a YouTube video for a reader who will not watch it. {LANGUAGE_POLICY}
+
+You are given the transcript and the evidence found for the video's checkable claims (each with a verdict and source URLs). When there are any, you are also given discussion found elsewhere on the web and the useful points viewers made in the comments and their replies.
+
+Split the video into its distinct topics, in video order, and write one comprehensive paragraph for each (4-7 sentences, plain prose, no lists). In each paragraph:
+- Say what the host claims or teaches about the topic, accurately and in enough detail to stand on its own.
+- Where the evidence bears on it, state plainly whether it supports, qualifies or contradicts the host, and give the correct figure or fact when the host was wrong. Refer to "independent sources", "the documentation" or the site by name; never write "the fact-check", "verdict", "tool" or "search".
+- Where viewers add a correction, fix, alternative or long-term experience, work it in and attribute it ("viewers point out that ..."). Do the same for outside web discussion ("according to ...").
+- Never add a fact that is not in the transcript, the evidence, the web discussion or the comments. If the host's point was not checked, just report what the host said without endorsing it.
+- Never write that something is absent or was not provided ("no comments mentioned this", "no viewer corrections were supplied"). A section missing from the input does not exist: say nothing about it.
+source_urls: only URLs that appear in the provided evidence and that the paragraph actually relied on.
+timestamp: where the host starts the topic; copy a timestamp that appears in the transcript. Never invent one."""

@@ -54,25 +54,59 @@ def parse_sse(body: str):
 
 
 # ---- renderer -------------------------------------------------------------------------------------
-def test_render_has_all_sections_in_order_and_dynamic_extras():
+def test_render_has_a_header_strip_two_tabs_topics_and_a_plain_fact_table():
     html = render_report_html(sample_report())
-    order = [htmllib.escape("What you'll learn"), htmllib.escape("What's wrong or doubtful"), "From the comments", "Elsewhere on the web", "Steps", "fact-checked claims", "Before you watch"]
-    positions = [html.index(name) for name in order]
-    assert positions == sorted(positions)
-    assert 'data-video-id="dQw4w9WgXcQ"' in html and "<ol class=\"extra extra-steps\">" in html
-    assert "t=60s" in html  # timestamp deep links
+    strip = html.split('role="tablist"')[0]
+    assert "review" in strip and "Clickbait: No" in strip and 'class="chip good">Clickbait' in strip  # Low is shown as "No", in green
+    assert 'title="1 of 2 checked claims hold up' in strip and "25% of facts correct" in strip and "Paid promotion: NordVPN" in strip  # high Debunked + low Verified -> 1 of 4 weight
+    assert html.count('role="tab"') == 2 and 'data-tab="summary"' in html and 'data-tab="facts"' in html
+    summary, facts = html.split('id="rpanel-facts"')
+    assert "Speed claims" in summary and "benchmarks show 1.4x" in summary and "a.example" in summary and "t=60s" in summary
+    assert "<table" not in summary and "What's wrong" not in html and "I already know" not in html
+    assert facts.count("<tr>") == 3  # header row + one row per checked claim
+    assert "verdict-bad" in facts and ">False<" in facts and ">Correct<" in facts and "A is 4x" in facts and "a.example" in facts
+    assert "hidden" in facts[:120]  # the Fact check tab starts hidden
+
+
+def test_clickbait_levels_and_missing_checks_have_their_own_colours():
+    for rating, label, cls in (("Medium", "Medium", "warn"), ("High", "High", "bad")):
+        report = sample_report()
+        report["headline"]["clickbait_rating"] = rating
+        assert f'class="chip {cls}">Clickbait: {label}' in render_report_html(report)
+    report = sample_report()
+    report["checked"], report["fact_check"] = [], []
+    html = render_report_html(report)
+    assert "Facts correct: n/a" in html and "No claims in this video could be fact-checked." in html
 
 
 def test_render_escapes_everything_and_skips_unsafe_urls():
     report = sample_report()
     report["title"] = "<script>alert(1)</script>"
     report["summary"]["tldr"] = "<img src=x onerror=alert(2)>"
-    report["summary"]["key_points"][0]["point"] = "</li><b>bold</b>"
-    report["corrections"][0]["sources"] = ["https://ok.example/p?a=1&b=2", "javascript:alert(3)"]
-    report["outside_discussion"][0]["url"] = "javascript:alert(4)"
+    report["topics"][0]["summary"] = "</p><b>bold</b>"
+    report["topics"][0]["title"] = "<i>t</i>"
+    report["topics"][0]["source_urls"] = ["https://ok.example/p?a=1&b=2", "javascript:alert(3)"]
+    report["fact_check"][0]["claim"] = "<u>claim</u>"
+    report["fact_check"][0]["sources"] = ["javascript:alert(4)", "https://ok.example/f"]
     html = render_report_html(report)
-    assert "<script>" not in html and "<img" not in html and "<b>bold</b>" not in html
-    assert "javascript:" not in html and "a=1&amp;b=2" in html
+    assert "<script>" not in html and "<img" not in html and "<b>bold</b>" not in html and "<i>" not in html and "<u>" not in html
+    assert "javascript:" not in html and "a=1&amp;b=2" in html and "ok.example/f" in html
+
+
+def test_reports_saved_before_v3_still_render_with_a_hint():
+    report = sample_report()
+    for key in ("topics", "fact_check"):
+        del report[key]
+    html = render_report_html(report)
+    assert "predates topic summaries" in html and "A speed" in html  # key ideas stand in for topics
+    assert "A is 4x" in html.split('id="rpanel-facts"')[1]  # the table is derived from the checked claims
+
+
+def test_topic_step_failure_shows_key_ideas_without_the_hint():
+    report = sample_report()
+    report["topics"] = []
+    html = render_report_html(report)
+    assert "A speed" in html and "predates" not in html
 
 
 def test_summary_and_comments_events_are_forwarded(client):
@@ -97,4 +131,15 @@ def test_legacy_stored_reports_still_render(client):
 def test_post_analyze_returns_the_structured_report(client):
     seed()
     body = client.post("/api/analyze", json={"video_url": URL}).json()
-    assert body["cached"] is True and body["report"]["version"] == 2
+    assert body["cached"] is True and body["report"]["version"] == 3
+
+
+def test_sponsor_chip_keeps_names_short_and_the_full_text_in_the_tooltip():
+    report = sample_report()
+    report["before_you_watch"]["sponsors"] = [
+        {"name": "Amazon Associates (affiliate links for mic, camera)", "disclosed": False},
+        {"name": "DataCamp", "disclosed": True}, {"name": "Maven, promo codes", "disclosed": True}, {"name": "Scrimba", "disclosed": True},
+    ]
+    html = render_report_html(report)
+    assert ">Paid promotion: Amazon Associates, DataCamp, Maven +1</span>" in html
+    assert 'title="Amazon Associates (affiliate links for mic, camera); DataCamp; Maven, promo codes; Scrimba"' in html

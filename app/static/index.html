@@ -79,6 +79,7 @@
         extraction: "Reading the transcript & comments",
         investigator: "Investigating the claims",
         critic: "Double-checking weak spots",
+        synthesis: "Writing the topic-by-topic summary",
         report: "Scoring and writing the report"
       };
       var VERDICT_CLASS = {
@@ -442,6 +443,18 @@
         var done = function (ok) { btn.textContent = ok ? "Copied" : "Copy failed"; setTimeout(function () { btn.textContent = "Copy trace"; }, 1500); };
         if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
         else done(false);
+      });
+
+      /* ---------- Report tabs (the report HTML is server-rendered, so one delegated handler) ---------- */
+      $("report").addEventListener("click", function (ev) {
+        var tab = ev.target.closest("button[data-tab]");
+        if (!tab) return;
+        $("report").querySelectorAll("button[data-tab]").forEach(function (b) {
+          var on = b === tab;
+          b.classList.toggle("active", on);
+          b.setAttribute("aria-selected", String(on));
+          $(b.getAttribute("aria-controls")).hidden = !on;
+        });
       });
 
       window.addEventListener("wheel", function (e) { if (e.deltaY < 0) userScrolled = true; }, { passive: true });

@@ -149,9 +149,15 @@ It shows every tool call with parameter names, results (truncated at 3000 charac
 
 ---
 
-## 8. Report v2
+## 8. Report layout (v3)
 
-**What the report contains.** A summary-first report chosen per video: TL;DW and at-a-glance chips; **What you'll learn** (key ideas with timestamps, each badged *checked*, *disputed*, *contradicted* or *unchecked*); **What's wrong or doubtful** (only contradicted, exaggerated or partly false claims, with quoted evidence and sources, plus a collapsed "couldn't verify" list); **From the comments** (only comments that add information about the topic); **Elsewhere on the web**; dynamic sections the model picks for the video (for example *Steps to follow* for a tutorial or *Exam numbers to know*); every checked claim in a collapsed list; and *Before you watch* (sponsors, affiliate links, bias). The old single "accuracy score" is replaced by "N of M checked claims hold up", weighted by claim importance. The number of claims scales with video length (3 to 8).
+The report has a header strip and two tabs.
+
+- **Header strip:** the video's category, a *Clickbait* level (No / Medium / High, coloured green / amber / red), and *N% of facts correct* (the share of checked claims that hold up, weighted by claim importance; hover for the counts; unverified claims are not counted). A *Paid promotion* chip appears when sponsors are detected.
+- **Summary tab:** a short overview, then one paragraph per topic in video order. Each paragraph combines what the host said, what independent web sources confirm or contradict, and what viewers add in comments and replies, with links to the sources used. A separate model step (`synthesis`) writes it after fact-checking; if that step fails, the key ideas are shown instead.
+- **Fact check tab:** a plain table of every checked claim: time, claim, verdict (Correct / Doubtful / False, or Unverified when no evidence was found) and source links. Verified and Mostly True show as Correct; Exaggerated and Partially False as Doubtful; Debunked as False.
+
+Comments: the agent fetches the top 100 comments by relevance plus their replies (up to 3 per comment, most-liked first, 60,000 characters in total) and reads them all; only those that add information about the topic are used.
 
 Reports saved before v2 still open in the old layout; press **Re-run analysis** to upgrade one. See `docs/ROADMAP.md` for the held hosted-API and Chrome-extension work.
 

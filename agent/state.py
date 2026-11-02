@@ -13,6 +13,8 @@ class AgentState(TypedDict, total=False):
     metadata: Dict[str, Any]
     channel_history: Dict[str, Any]
     transcript_summary: Dict[str, Any]
+    transcript_text: str  # timestamped transcript as fed to the model, reused by the synthesis step
+    topics: List[Dict[str, Any]]  # topic-wise summaries written by the synthesis step
     extracted_claims: List[Dict[str, Any]]
     comment_insights: List[Dict[str, Any]]  # new information found in viewer comments
     community_insights: List[Dict[str, Any]]  # outside discussion (web/social), each with a real URL
@@ -22,5 +24,5 @@ class AgentState(TypedDict, total=False):
     error_message: Optional[str]
     overall_accuracy_score: int
     saved_to_memory: bool
-    report: Dict[str, Any]  # structured report v2 (see agent/report.py)
+    report: Dict[str, Any]  # structured report v3 (see agent/report.py)
     final_report_md: str

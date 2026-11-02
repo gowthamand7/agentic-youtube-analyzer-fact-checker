@@ -1,4 +1,4 @@
-"""Report v2: structured report builder, scoring, evidence guardrails, and the Markdown renderer.
+"""Report v3: structured report builder, scoring, evidence guardrails, and the Markdown renderer.
 
 The structured dict from `build_report` is the single source of truth. The web UI renders it to HTML
 (app/render.py); `render_markdown` serves the CLI and JSON API.
@@ -13,12 +13,18 @@ IMPORTANCE_WEIGHTS = {"high": 3, "medium": 2, "low": 1}
 VERDICT_SCORES = {"Verified": 100, "Mostly True": 85, "Exaggerated": 50, "Partially False": 35, "Debunked": 0}
 HOLDS_UP = ("Verified", "Mostly True")
 WRONG = ("Exaggerated", "Partially False", "Debunked")
+# The fact-check table speaks in three plain words (plus "Unverified" when no evidence could be found).
+FACT_LABEL = {
+    "Verified": "Correct", "Mostly True": "Correct", "Exaggerated": "Doubtful", "Partially False": "Doubtful",
+    "Debunked": "False", "Unverified": "Unverified",
+}
 VERDICT_ICONS = {
     "Verified": "✅", "Mostly True": "✅", "Exaggerated": "⚠️", "Partially False": "⚠️", "Debunked": "❌", "Unverified": "❔",
 }
 ADDITION_ICONS = {
     "Tutorial Fix": "🔧", "Free Alternative": "💸", "Reliability Report": "⏳", "Correction": "📝", "Extra Context": "🧩", "Other": "💬",
 }
+CLICKBAIT_LABEL = {"Low": "No", "Medium": "Medium", "High": "High"}
 TRANSCRIPT_ERROR = "Transcripts are disabled or unavailable for this video; cannot perform spoken claim auditing."
 
 # Tool-meta text the model sometimes files as "community discussion"; never real community content.
@@ -79,6 +85,18 @@ def compute_accuracy_score(results: List[Dict[str, Any]]) -> int:
     return round(total / weight_sum) if weight_sum else 0
 
 
+def percent_correct(results: List[Dict[str, Any]]) -> Optional[int]:
+    """Share of checked claims that hold up, weighted by importance (0-100); None when nothing could be checked."""
+    right = total = 0
+    for r in results:
+        verdict = r.get("verdict")
+        if verdict in HOLDS_UP or verdict in WRONG:
+            w = IMPORTANCE_WEIGHTS.get(r.get("importance", "medium"), 2)
+            total += w
+            right += w if verdict in HOLDS_UP else 0
+    return round(100 * right / total) if total else None
+
+
 def reliability(results: List[Dict[str, Any]]) -> Dict[str, int]:
     verdicts = [r.get("verdict") for r in results]
     right = sum(v in HOLDS_UP for v in verdicts)
@@ -90,6 +108,7 @@ def reliability(results: List[Dict[str, Any]]) -> Dict[str, int]:
         "exaggerated": sum(v == "Exaggerated" for v in verdicts),
         "unverified": sum(v == "Unverified" for v in verdicts),
         "score": compute_accuracy_score(results),
+        "percent_correct": percent_correct(results),
     }
 
 
@@ -102,7 +121,7 @@ def _trend(score: int, history: Dict[str, Any]) -> Optional[str]:
 
 
 def build_report(state: Dict[str, Any], results: List[Dict[str, Any]], score: int) -> Dict[str, Any]:
-    """Assemble the structured v2 report from the final agent state."""
+    """Assemble the structured v3 report from the final agent state."""
     vid = state["video_id"]
     meta = state.get("metadata", {})
     summary = state.get("transcript_summary", {})
@@ -133,8 +152,15 @@ def build_report(state: Dict[str, Any], results: List[Dict[str, Any]], score: in
     outside = [dict(o) for o in clean_outside_discussion(state.get("community_insights", []))]
     links = meta.get("links", [])
 
+    fact_check = [
+        {
+            "timestamp": r["timestamp"], "claim": r["claim"], "rating": FACT_LABEL.get(r["verdict"], "Unverified"),
+            "verdict": r["verdict"], "confidence": r.get("confidence", ""), "sources": r.get("sources", []),
+        }
+        for r in sorted(results, key=lambda r: timestamp_to_seconds(r["timestamp"]) or 0)
+    ]
     return {
-        "version": 2,
+        "version": 3,
         "video_id": vid,
         "title": meta.get("title", ""),
         "channel": meta.get("channel_name", ""),
@@ -142,6 +168,8 @@ def build_report(state: Dict[str, Any], results: List[Dict[str, Any]], score: in
         "topic_tags": summary.get("topic_tags", []),
         "headline": summary.get("clickbait", {}),
         "summary": {"tldr": summary.get("tldr", ""), "key_points": key_points},
+        "topics": state.get("topics", []),
+        "fact_check": fact_check,
         "corrections": corrections,
         "unverified": [r for r in results if r["verdict"] == "Unverified"],
         "checked": results,
@@ -211,60 +239,36 @@ def render_error_report(message: str, state: Dict[str, Any]) -> str:
 def render_markdown(report: Dict[str, Any]) -> str:
     vid = report["video_id"]
     hl, rel, byw = report["headline"], report["reliability"], report["before_you_watch"]
+    correct = f"{rel['percent_correct']}% of checked facts correct" if rel.get("percent_correct") is not None else "no facts could be checked"
     lines = [
         f"# {report['title']}",
         f"*{report['channel']} · {report['video_type']}*",
         "",
-        f"**TL;DW:** {report['summary']['tldr']}",
+        f"**Clickbait:** {CLICKBAIT_LABEL.get(hl.get('clickbait_rating', ''), 'n/a')} · **Facts:** {correct}"
+        + (" · **Paid promotion**" if byw["has_paid_promotion"] else ""),
+        f"**Title check:** {hl.get('verdict', 'n/a')} (answer at {ts_link(vid, hl.get('payoff_timestamp', ''))})",
         "",
-        f"**Title check:** {hl.get('verdict', 'n/a')} (answer at {ts_link(vid, hl.get('payoff_timestamp', ''))}; "
-        f"clickbait: {hl.get('clickbait_rating', 'n/a')})",
+        "## Summary",
+        "",
+        report["summary"]["tldr"],
     ]
-    if rel["checked"] or rel["unverified"]:
-        parts = [f"{rel['hold_up']} of {rel['checked']} checked claims hold up"] if rel["checked"] else ["no claims could be checked"]
-        if rel["contradicted"]:
-            parts.append(f"{rel['contradicted']} contradicted")
-        if rel["exaggerated"]:
-            parts.append(f"{rel['exaggerated']} exaggerated")
-        if rel["unverified"]:
-            parts.append(f"{rel['unverified']} couldn't be verified")
-        lines.append(f"**Reliability:** {', '.join(parts)} (weighted score {rel['score']}/100)")
+    topics = report.get("topics") or [
+        {"title": kp["concept"], "timestamp": kp["timestamp"], "summary": kp["point"], "source_urls": []}
+        for kp in report["summary"]["key_points"]
+    ]
+    for t in topics:
+        srcs = " ".join(f"[{i + 1}]({u})" for i, u in enumerate(t.get("source_urls", [])))
+        lines += ["", f"### {t['title']} ({ts_link(vid, t['timestamp'])})", "", f"{t['summary']} {srcs}".rstrip()]
 
-    lines += ["", "## What you'll learn"]
-    for kp in report["summary"]["key_points"]:
-        badge = ""
-        if kp["check"]:
-            badge = f" {VERDICT_ICONS.get(kp['check']['verdict'], '')} *{kp['check']['verdict']}*"
-        lines.append(f"* [{kp['timestamp']}] {kp['point']}{badge}")
-
-    lines += ["", "## What's wrong or doubtful"]
-    if report["corrections"]:
-        lines += ["| Timestamp | Claim | Verdict | Evidence |", "| :--- | :--- | :--- | :--- |"]
-        for r in report["corrections"]:
+    lines += ["", "## Fact check"]
+    rows = report.get("fact_check") or []
+    if rows:
+        lines += ["| Time | Claim | Verdict | Sources |", "| :--- | :--- | :--- | :--- |"]
+        for r in rows:
             srcs = " ".join(f"[{i + 1}]({u})" for i, u in enumerate(r.get("sources", [])))
-            lines.append(
-                f"| {ts_link(vid, r['timestamp'])} | {_cell(r['claim'])} | {VERDICT_ICONS[r['verdict']]} **{r['verdict']}** | "
-                f"{_cell(r.get('evidence', ''))} {srcs} |"
-            )
+            lines.append(f"| {ts_link(vid, r['timestamp'])} | {_cell(r['claim'])} | {VERDICT_ICONS.get(r['verdict'], '')} {r['rating']} | {srcs} |")
     else:
-        lines.append("Nothing in the checked claims was contradicted.")
-    if report["unverified"]:
-        lines.append("\n*Couldn't verify:* " + "; ".join(r["claim"] for r in report["unverified"]))
-
-    lines += ["", "## From the comments"]
-    lines += [
-        f"* {ADDITION_ICONS.get(c['category'], '💬')} **{c['category']}** ({c['author']}, {c['likes']} likes): {c['detail']}"
-        for c in report["comments"]
-    ] or ["* No comments added new information."]
-    if report["outside_discussion"]:
-        lines += ["", "## Elsewhere on the web"]
-        lines += [f"* {ADDITION_ICONS.get(o['category'], '💬')} **{o['category']}** ([{o['source']}]({o['url']})): {o['detail']}" for o in report["outside_discussion"]]
-
-    for sec in report["extras"]:
-        lines += ["", f"## {sec['title']}"]
-        for i, it in enumerate(sec["items"], 1):
-            label = f"**{it['label']}** " if it.get("label") else ""
-            lines.append(f"{i}. {label}{it['text']}" if sec["kind"] == "steps" else f"* {label}{it['text']}")
+        lines.append("No claims were checked.")
 
     notes = []
     if byw["sponsors"]:

@@ -4,11 +4,10 @@ Status as of 2026-11-02. Items marked **HELD** are decided and designed but inte
 
 ## Done
 
-- **Report v2.** Summary-first report built from a structured object (`agent/report.py`): TL;DW, "What you'll learn"
-  (key ideas with timestamps and a checked/disputed badge), "What's wrong or doubtful", "From the comments",
-  "Elsewhere on the web", and dynamic sections the model picks per video (steps, comparison, timeline, numbers).
-  Claims are importance-ranked and capped by video length; the single average score is replaced by
-  "N of M checked claims hold up" (weighted by importance).
+- **Report v3.** Header strip (category, clickbait level, % of facts correct) and two tabs built from a structured
+  object (`agent/report.py`). *Summary*: topic-by-topic paragraphs that merge the host's content, web evidence and
+  comments (top 100 comments plus replies). *Fact check*: a plain table of claims with Correct / Doubtful / False and
+  source links. Claims are importance-ranked and capped by video length; transcripts fall back to Supadata.
 - **Personalization removed.** The "I already know this" button, the knowledge profile and the matching model call were
   built and then removed: they did not add enough value to justify the extra step and latency.
 

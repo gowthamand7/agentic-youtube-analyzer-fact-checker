@@ -21,7 +21,7 @@ def describe_start(tool: str, args: Dict[str, Any]) -> Tuple[str, Optional[str]]
     if tool == "get_transcript":
         return "Fetching the transcript", None
     if tool == "get_comments":
-        return "Reading the top viewer comments", None
+        return "Reading the top viewer comments and their replies", None
     if tool == "search_web_factcheck":
         depth = " (deep search)" if args.get("search_depth") == "advanced" else ""
         return f"Searching the web{depth}", _short(args.get("query", ""))
@@ -64,7 +64,9 @@ def describe_end(tool: str, result: Any) -> Tuple[bool, str]:
     if tool == "get_comments":
         if r.get("status") == "COMMENTS_DISABLED":
             return True, "Comments are turned off"
-        return True, f"{len(r.get('comments', []))} comments loaded"
+        comments = r.get("comments", [])
+        replies = sum(len(c.get("replies") or []) for c in comments)
+        return True, f"{len(comments)} comments and {replies} replies loaded"
     if tool == "search_web_factcheck":
         results = r.get("results", [])
         domains = []
