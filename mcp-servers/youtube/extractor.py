@@ -262,3 +262,55 @@ def fetch_comments(
             return {"status": "COMMENTS_DISABLED", "comments": []}
         raise
     return {"status": "OK", "comments": comments[:max_results]}
+
+
+TRANSCRIPT_TTL_SEC = 30 * 24 * 3600  # captions rarely change once published
+NO_TRANSCRIPT_TTL_SEC = 24 * 3600  # "disabled/none" can change, but not minute to minute
+METADATA_TTL_SEC = 6 * 3600  # view counts and descriptions drift
+
+
+def _slice_segments(result: Dict[str, Any], start_sec: Optional[int], end_sec: Optional[int]) -> Dict[str, Any]:
+    if start_sec is None and end_sec is None:
+        return result
+    segments = [
+        s
+        for s in result["segments"]
+        if (start_sec is None or s["start_sec"] >= start_sec) and (end_sec is None or s["start_sec"] <= end_sec)
+    ]
+    return {**result, "segments": segments}
+
+
+def fetch_transcript_cached(
+    video_id: str,
+    languages: Optional[List[str]],
+    api: Any,
+    cache: Any,
+    start_sec: Optional[int] = None,
+    end_sec: Optional[int] = None,
+) -> Dict[str, Any]:
+    """fetch_transcript with a disk cache. The full transcript is cached once; start/end slice it afterwards.
+
+    Only definitive outcomes are cached (OK, TRANSCRIPTS_DISABLED). Blocks, outages and unknown errors are
+    never cached, so a temporary YouTube rate limit cannot poison later requests.
+    """
+    key = f"transcript_{video_id}_{'-'.join(sorted(languages or ['en']))}"
+    hit = cache.get(key)
+    if hit is not None:
+        return _slice_segments({**hit, "cached": True}, start_sec, end_sec)
+
+    result = fetch_transcript(video_id, languages, api)
+    if result["status"] == "OK":
+        cache.put(key, result, TRANSCRIPT_TTL_SEC)
+    elif result["status"] == "TRANSCRIPTS_DISABLED":
+        cache.put(key, result, NO_TRANSCRIPT_TTL_SEC)
+    return _slice_segments({**result, "cached": False}, start_sec, end_sec)
+
+
+def fetch_metadata_cached(video_id: str, client: Any, cache: Any) -> Dict[str, Any]:
+    key = f"metadata_{video_id}"
+    hit = cache.get(key)
+    if hit is not None:
+        return {**hit, "cached": True}
+    meta = fetch_metadata(video_id, client)
+    cache.put(key, meta, METADATA_TTL_SEC)
+    return {**meta, "cached": False}

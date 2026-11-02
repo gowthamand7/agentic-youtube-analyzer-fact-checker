@@ -332,3 +332,10 @@ async def test_unparseable_history_is_ignored_and_logged_as_failed(tmp_path, mon
     assert state["channel_history"] == {}
     failed = next(r for r in _read_log(next(tmp_path.glob("*.jsonl"))) if r.get("tool") == "get_channel_history")
     assert failed["ok"] is False and "boom" in failed["summary"]
+
+
+def test_narration_marks_cached_results():
+    from agent.narration import describe_end
+
+    assert describe_end("get_transcript", {"status": "OK", "segments": [1], "language": "en", "cached": True}) == (True, "1 lines (en) (cached)")
+    assert describe_end("get_video_metadata", {"title": "T", "channel_name": "C", "cached": True})[1].endswith("(cached)")

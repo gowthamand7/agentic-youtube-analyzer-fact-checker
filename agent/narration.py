@@ -47,7 +47,7 @@ def describe_end(tool: str, result: Any) -> Tuple[bool, str]:
         return False, _short(result["raw"], 140)
     r = result if isinstance(result, dict) else {}
     if tool == "get_video_metadata":
-        return True, f"“{_short(r.get('title', ''), 70)}” by {r.get('channel_name', 'unknown')}"
+        return True, f"“{_short(r.get('title', ''), 70)}” by {r.get('channel_name', 'unknown')}" + (" (cached)" if r.get("cached") else "")
     if tool == "get_channel_history":
         n = r.get("total_videos_analyzed", 0) or 0
         if not n:
@@ -56,7 +56,7 @@ def describe_end(tool: str, result: Any) -> Tuple[bool, str]:
     if tool == "get_transcript":
         if r.get("status") != "OK":
             return False, r.get("message", "No transcript available")
-        return True, f"{len(r.get('segments', []))} lines ({r.get('language', '?')})"
+        return True, f"{len(r.get('segments', []))} lines ({r.get('language', '?')})" + (" (cached)" if r.get("cached") else "")
     if tool == "get_comments":
         if r.get("status") == "COMMENTS_DISABLED":
             return True, "Comments are turned off"

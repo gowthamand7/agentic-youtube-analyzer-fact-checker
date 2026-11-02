@@ -224,3 +224,85 @@ def test_fetch_comments_disabled():
 def test_fetch_comments_rejects_bad_sort():
     with pytest.raises(ValueError):
         extractor.fetch_comments("vid", 10, "weird", MagicMock())
+
+
+# ---- cache ----------------------------------------------------------------------------------------
+from cache import DiskCache  # noqa: E402
+
+
+def _ok_api(calls):
+    api = MagicMock()
+
+    def fetch(video_id, languages):
+        calls.append(video_id)
+        return SimpleNamespace(language_code="en", is_generated=False, snippets=[_snippet("a", 1), _snippet("b", 50), _snippet("c", 100)])
+
+    api.fetch.side_effect = fetch
+    return api
+
+
+def test_disk_cache_roundtrip_ttl_and_corruption(tmp_path, monkeypatch):
+    cache = DiskCache(tmp_path)
+    cache.put("k", {"a": 1}, ttl_sec=60)
+    assert cache.get("k") == {"a": 1}
+    assert cache.get("missing") is None
+
+    cache.put("short", 1, ttl_sec=-1)  # already expired
+    assert cache.get("short") is None
+
+    (tmp_path / "bad.json").write_text("{not json", encoding="utf-8")
+    assert cache.get("bad") is None  # corrupt file is a miss, not a crash
+    assert not list(tmp_path.glob("*.tmp"))  # atomic write leaves no temp files
+
+    cache.put("../escape/attempt", 1, ttl_sec=60)  # key is sanitized into the cache dir
+    assert all(p.parent == tmp_path for p in tmp_path.rglob("*.json"))
+
+
+def test_transcript_second_call_is_served_from_cache(tmp_path):
+    calls, cache = [], DiskCache(tmp_path)
+    api = _ok_api(calls)
+    first = extractor.fetch_transcript_cached("vid", None, api, cache)
+    second = extractor.fetch_transcript_cached("vid", None, api, cache)
+    assert (first["cached"], second["cached"]) == (False, True)
+    assert calls == ["vid"]  # YouTube was contacted once
+    assert second["segments"] == first["segments"] and second["status"] == "OK"
+
+
+def test_cached_transcript_can_be_sliced_and_languages_get_separate_entries(tmp_path):
+    calls, cache = [], DiskCache(tmp_path)
+    api = _ok_api(calls)
+    extractor.fetch_transcript_cached("vid", None, api, cache)
+    sliced = extractor.fetch_transcript_cached("vid", None, api, cache, start_sec=10, end_sec=60)
+    assert sliced["cached"] is True and [s["text"] for s in sliced["segments"]] == ["b"]
+    extractor.fetch_transcript_cached("vid", ["es"], api, cache)  # different language preference -> new fetch
+    assert calls == ["vid", "vid"]
+
+
+def test_disabled_transcript_is_cached_but_blocks_and_errors_are_not(tmp_path):
+    cache = DiskCache(tmp_path)
+    api = MagicMock()
+    api.fetch.side_effect = TranscriptsDisabled("vid")
+    api.list.side_effect = TranscriptsDisabled("vid")
+    extractor.fetch_transcript_cached("vid", None, api, cache)
+    again = extractor.fetch_transcript_cached("vid", None, api, cache)
+    assert again["status"] == "TRANSCRIPTS_DISABLED" and again["cached"] is True
+    assert api.fetch.call_count == 1
+
+    from youtube_transcript_api import IpBlocked
+
+    blocked = MagicMock()
+    blocked.fetch.side_effect = IpBlocked("vid2")
+    r1 = extractor.fetch_transcript_cached("vid2", None, blocked, cache)
+    r2 = extractor.fetch_transcript_cached("vid2", None, blocked, cache)
+    assert r1["status"] == r2["status"] == "REQUEST_BLOCKED" and r2["cached"] is False
+    assert blocked.fetch.call_count == 2  # a temporary block must never be remembered
+
+
+def test_metadata_is_cached(tmp_path):
+    cache = DiskCache(tmp_path)
+    item = {"snippet": {"title": "T", "channelId": "UC", "channelTitle": "C", "description": ""}, "contentDetails": {}, "statistics": {}}
+    client = _yt_client([item])
+    a = extractor.fetch_metadata_cached("vid", client, cache)
+    b = extractor.fetch_metadata_cached("vid", client, cache)
+    assert (a["cached"], b["cached"]) == (False, True) and b["title"] == "T"
+    assert client.videos.return_value.list.return_value.execute.call_count == 1

@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 from youtube_transcript_api import YouTubeTranscriptApi
 
 import extractor
+from cache import default_cache
 
 mcp = FastMCP("youtube-mcp")
 
@@ -41,7 +42,7 @@ def get_video_metadata(video_url: str) -> Dict[str, Any]:
     """Get a video's id, title, channel, upload date, description, chapters, outbound links (affiliate/shortener/UTM flagged) and promo codes."""
     try:
         video_id = extractor.parse_video_id(video_url)
-        return {"status": "OK", **extractor.fetch_metadata(video_id, _data_api())}
+        return {"status": "OK", **extractor.fetch_metadata_cached(video_id, _data_api(), default_cache())}
     except (ValueError, LookupError, RuntimeError, HttpError) as exc:
         return _error(exc)
 
@@ -61,7 +62,7 @@ def get_transcript(
         video_id = extractor.parse_video_id(video_id)
     except ValueError as exc:
         return _error(exc)
-    return extractor.fetch_transcript(video_id, languages, _transcript_api(), start_sec, end_sec)
+    return extractor.fetch_transcript_cached(video_id, languages, _transcript_api(), default_cache(), start_sec, end_sec)
 
 
 @mcp.tool()

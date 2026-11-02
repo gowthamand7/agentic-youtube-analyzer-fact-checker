@@ -33,3 +33,4 @@ clickhouse_logs/
 Thumbs.db
 .playwright-mcp/
 logs/
+cache/

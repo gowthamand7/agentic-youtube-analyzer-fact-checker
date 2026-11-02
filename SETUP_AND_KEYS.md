@@ -111,3 +111,19 @@ uv run python scripts/show_log.py latest -v  # also tool args/results and LLM ou
 Logged: tool calls (arguments, truncated result, duration, traceback on failure), LLM calls (purpose, prompt size, structured output, duration), each model tool-call round, verdicts, node transitions, and the final status (`ok`, `aborted`, `request_error`, `request_cancelled` for a closed browser tab).
 
 Env: `LOG_DIR` changes the directory; `LOG_PROMPTS=1` also records the full LLM prompts (large, may include transcript text).
+
+---
+
+## 6. Transcript & Metadata Cache
+
+`youtube-mcp` caches YouTube lookups on disk in `cache/` (git-ignored; override with `CACHE_DIR`), so re-analyzing a video does not contact YouTube again. The activity timeline shows `(cached)` on cache hits.
+
+| Data | Cached for | Notes |
+| :--- | :--- | :--- |
+| Transcript (found) | 30 days | Full transcript stored once; `start_sec`/`end_sec` slice it afterwards |
+| Transcript (disabled/none) | 24 hours | |
+| Video metadata | 6 hours | View counts and descriptions drift |
+| Comments | not cached | Official API, cheap |
+| Blocks / outages / unknown errors | never | A temporary YouTube rate limit is never remembered |
+
+To force a fresh fetch, delete the matching file in `cache/` (for example `cache/transcript_<videoId>_en.json`) or the whole folder.
