@@ -1,4 +1,4 @@
-"""Render a structured report (agent/report.py) to sanitized HTML, applying per-user personalization.
+"""Render a structured report (agent/report.py) to sanitized HTML.
 
 Every dynamic value goes through html.escape; links are limited to https://youtube.com timestamps and http(s) sources.
 """
@@ -15,7 +15,6 @@ _VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 _VERDICT_CLASS = {
     "Verified": "good", "Mostly True": "good", "Exaggerated": "warn", "Partially False": "warn", "Debunked": "bad", "Unverified": "none",
 }
-Annotations = Dict[str, Dict[str, Any]]
 
 
 def esc(value: Any) -> str:
@@ -48,35 +47,6 @@ def _check_badge(check: Optional[Dict[str, str]]) -> str:
     return f'<span class="verdict verdict-{cls}" title="{esc(check["verdict"])} ({esc(check["confidence"])} confidence)">{VERDICT_ICONS.get(check["verdict"], "")} {label}</span>'
 
 
-def _know_button(label: str = "I already know this") -> str:
-    return f'<button type="button" class="know-btn" data-action="know">{esc(label)}</button>'
-
-
-def _learn_item(item_html: str, item_id: str, kind: str, known: Optional[Dict[str, Any]]) -> str:
-    if known:
-        controls = (
-            f'<span class="known-note">matches “{esc(known["concept"])}”</span>'
-            f'<button type="button" class="know-btn undo" data-action="unknow" data-entry="{esc(known["entry_id"])}">Not actually known</button>'
-        )
-        return f'<li class="item known" data-item-id="{esc(item_id)}" data-kind="{kind}">{item_html}{controls}</li>'
-    return f'<li class="item" data-item-id="{esc(item_id)}" data-kind="{kind}">{item_html}{_know_button()}</li>'
-
-
-def _split(items: List[Dict[str, Any]], notes: Annotations) -> tuple:
-    new = [i for i in items if i["id"] not in notes]
-    known = [i for i in items if i["id"] in notes]
-    return new, known
-
-
-def _known_group(known_html: List[str], noun: str) -> str:
-    if not known_html:
-        return ""
-    return (
-        f'<details class="known-group"><summary>You already know {len(known_html)} of these {noun}</summary>'
-        f'<ul class="learn">{"".join(known_html)}</ul></details>'
-    )
-
-
 def _section(title: str, body: str, count: Optional[str] = None, cls: str = "") -> str:
     badge = f' <span class="count">{esc(count)}</span>' if count else ""
     return f'<section class="r-sec {cls}"><h3>{esc(title)}{badge}</h3>{body}</section>'
@@ -92,8 +62,7 @@ def _claim_card(vid: str, r: Dict[str, Any], open_: bool = False) -> str:
     )
 
 
-def render_report_html(report: Dict[str, Any], notes: Optional[Annotations] = None, aborted: bool = False) -> str:
-    notes = notes or {}
+def render_report_html(report: Dict[str, Any], aborted: bool = False) -> str:
     vid = report["video_id"]
     rel, hl, byw = report["reliability"], report["headline"], report["before_you_watch"]
     parts: List[str] = []
@@ -119,27 +88,14 @@ def render_report_html(report: Dict[str, Any], notes: Optional[Annotations] = No
         f'<p class="tldr">{esc(report["summary"]["tldr"])}</p>{title_check}</div>'
     )
 
-    # ---- what you'll learn (personalized) ----
+    # ---- what you'll learn ----
     points = report["summary"]["key_points"]
-    new_pts, known_pts = _split(points, notes)
 
     def point_html(kp: Dict[str, Any]) -> str:
         key = '<span class="chip key">key idea</span>' if kp["importance"] == "high" else ""
-        return f'<span class="item-main"><span class="ts">{ts_link(vid, kp["timestamp"])}</span> {esc(kp["point"])} {key} {_check_badge(kp["check"])}</span>'
+        return f'<li class="item"><span class="item-main"><span class="ts">{ts_link(vid, kp["timestamp"])}</span> {esc(kp["point"])} {key} {_check_badge(kp["check"])}</span></li>'
 
-    learn_html = "".join(_learn_item(point_html(kp), kp["id"], "point", None) for kp in new_pts)
-    if not new_pts and points:
-        learn_html = '<li class="empty">You already know everything this video teaches. Nothing new here.</li>'
-    count = f"{len(new_pts)} new to you" if notes else f"{len(points)} ideas"
-    parts.append(
-        _section(
-            "What you'll learn",
-            f'<ul class="learn">{learn_html}</ul>'
-            + _known_group([_learn_item(point_html(kp), kp["id"], "point", notes[kp["id"]]) for kp in known_pts], "points"),
-            count,
-            "learn-sec",
-        )
-    )
+    parts.append(_section("What you'll learn", f'<ul class="learn">{"".join(point_html(kp) for kp in points)}</ul>', f"{len(points)} ideas", "learn-sec"))
 
     # ---- what's wrong or doubtful ----
     wrong = "".join(_claim_card(vid, r, open_=i == 0) for i, r in enumerate(report["corrections"]))
@@ -148,29 +104,21 @@ def render_report_html(report: Dict[str, Any], notes: Optional[Annotations] = No
     unverified = ""
     if report["unverified"]:
         unverified = (
-            '<details class="known-group"><summary>Couldn\'t verify ' + str(len(report["unverified"])) + "</summary>"
+            '<details class="fold-group"><summary>Couldn\'t verify ' + str(len(report["unverified"])) + "</summary>"
             + "".join(_claim_card(vid, r) for r in report["unverified"]) + "</details>"
         )
     parts.append(_section("What's wrong or doubtful", f'<div class="claims">{wrong}</div>{unverified}', cls="wrong-sec"))
 
-    # ---- from the comments (personalized) ----
-    comments = report["comments"]
-    new_cm, known_cm = _split(comments, notes)
-
+    # ---- from the comments ----
     def comment_html(c: Dict[str, Any]) -> str:
         return (
-            f'<span class="item-main"><span class="chip">{ADDITION_ICONS.get(c["category"], "💬")} {esc(c["category"])}</span> '
-            f'{esc(c["detail"])} <span class="meta">— {esc(c["author"])}, {esc(c["likes"])} likes</span></span>'
+            f'<li class="item"><span class="item-main"><span class="chip">{ADDITION_ICONS.get(c["category"], "💬")} {esc(c["category"])}</span> '
+            f'{esc(c["detail"])} <span class="meta">— {esc(c["author"])}, {esc(c["likes"])} likes</span></span></li>'
         )
 
-    if comments:
-        body = f'<ul class="learn">{"".join(_learn_item(comment_html(c), c["id"], "comment", None) for c in new_cm)}</ul>'
-        if not new_cm:
-            body = '<p class="empty">You already know everything the comments add.</p>'
-        body += _known_group([_learn_item(comment_html(c), c["id"], "comment", notes[c["id"]]) for c in known_cm], "comments")
-    else:
-        body = '<p class="empty">No comments added new information.</p>'
-    parts.append(_section("From the comments", body, f"{len(new_cm)} new to you" if notes and comments else None))
+    comments = report["comments"]
+    body = f'<ul class="learn">{"".join(comment_html(c) for c in comments)}</ul>' if comments else '<p class="empty">No comments added new information.</p>'
+    parts.append(_section("From the comments", body))
 
     # ---- elsewhere on the web ----
     if report["outside_discussion"]:

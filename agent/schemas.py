@@ -117,14 +117,3 @@ class WeakClaim(BaseModel):
 
 class CriticOutput(BaseModel):
     weak_claims: List[WeakClaim]
-
-
-class KnownMatch(BaseModel):
-    item_id: str
-    known_entry_id: Optional[str] = Field(
-        default=None, description="Id of the user's known entry that covers the SAME knowledge, or null."
-    )
-
-
-class KnownMatchOutput(BaseModel):
-    matches: List[KnownMatch]

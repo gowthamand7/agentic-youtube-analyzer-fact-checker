@@ -85,11 +85,3 @@ VERIFICATION_FINAL = (
 CRITIC_SYSTEM = f"""You are a critic reviewing weak fact-check results (Unverified, low confidence, or missing \
 sources). For each, write a better, more specific web search query in English (different keywords, include \
 entity names, numbers, years, or official-source hints). {LANGUAGE_POLICY}"""
-
-PERSONALIZE_SYSTEM = """You decide which items a user ALREADY KNOWS. You get new items (id, concept, text) and a list \
-of knowledge entries the user previously marked as known (id, concept, text).
-
-An item counts as known only if one known entry states the SAME fact or idea, so that reading the item would teach \
-the user nothing new. Sharing a topic is not enough: "How compound interest works" does not cover "7% over 30 years \
-gives 7.6x". When unsure, answer null (the user would rather see something twice than miss something new).
-Return one match per item, with known_entry_id set to the covering entry's id or null."""

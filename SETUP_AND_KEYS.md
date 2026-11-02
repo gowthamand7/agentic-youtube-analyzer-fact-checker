@@ -149,13 +149,9 @@ It shows every tool call with parameter names, results (truncated at 3000 charac
 
 ---
 
-## 8. Report v2 and "I already know this"
+## 8. Report v2
 
 **What the report contains.** A summary-first report chosen per video: TL;DW and at-a-glance chips; **What you'll learn** (key ideas with timestamps, each badged *checked*, *disputed*, *contradicted* or *unchecked*); **What's wrong or doubtful** (only contradicted, exaggerated or partly false claims, with quoted evidence and sources, plus a collapsed "couldn't verify" list); **From the comments** (only comments that add information about the topic); **Elsewhere on the web**; dynamic sections the model picks for the video (for example *Steps to follow* for a tutorial or *Exam numbers to know*); every checked claim in a collapsed list; and *Before you watch* (sponsors, affiliate links, bias). The old single "accuracy score" is replaced by "N of M checked claims hold up", weighted by claim importance. The number of claims scales with video length (3 to 8).
-
-**Personalization.** Click **I already know this** on a key idea or comment. It is saved to `profile/knowledge.json` (git-ignored; override with `KNOWLEDGE_FILE`) and hidden from future reports; a collapsed "You already know N of these points" group keeps it recoverable. Matching uses the idea's short concept name plus one small model call that only hides an item when a known entry states the *same* knowledge (related-but-different ideas stay visible). Use **Undo** right after marking, or **Your knowledge** (top right) to remove entries.
-
-API: `GET /api/knowledge`, `POST /api/knowledge {"video_id", "item_id"}` (the text is taken from the saved report, never from the client), `DELETE /api/knowledge/{id}`.
 
 Reports saved before v2 still open in the old layout; press **Re-run analysis** to upgrade one. See `docs/ROADMAP.md` for the held hosted-API and Chrome-extension work.
 

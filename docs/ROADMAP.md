@@ -9,10 +9,8 @@ Status as of 2026-11-02. Items marked **HELD** are decided and designed but inte
   "Elsewhere on the web", and dynamic sections the model picks per video (steps, comparison, timeline, numbers).
   Claims are importance-ranked and capped by video length; the single average score is replaced by
   "N of M checked claims hold up" (weighted by importance).
-- **Personalization.** Every key idea and useful comment has an "I already know this" button. Marked items go into a
-  local profile (`profile/knowledge.json`) and are hidden from future reports; matching is lexical shortlisting plus one
-  small model call that decides whether a known entry states the *same* knowledge. Nothing is pre-trained. Undo and a
-  "Your knowledge" panel are included.
+- **Personalization removed.** The "I already know this" button, the knowledge profile and the matching model call were
+  built and then removed: they did not add enough value to justify the extra step and latency.
 
 ## HELD
 
@@ -20,10 +18,9 @@ Status as of 2026-11-02. Items marked **HELD** are decided and designed but inte
 
 Needed before anyone but the author can use it.
 
-- Accounts and auth; per-user profile storage (the `KnowledgeStore` file path is the only thing that changes per user).
+- Accounts and auth.
 - Quotas and rate limits. One analysis costs roughly 6-12 Tavily searches plus 4-6 model calls and takes 45-110 s.
-- Shared per-video cache so a popular video is analyzed once, personalized per user at read time (already how reports
-  are structured: universal analysis, per-user annotation).
+- Shared per-video cache so a popular video is analyzed once.
 - CORS and an allowed-origins list for the extension; HTTPS; secrets management (API keys must stay server-side).
 - Transcript fetching from a server IP gets blocked at scale (see #4 for the plan).
 - Cost controls: cap concurrent runs, kill switch, per-user daily budget.
@@ -36,7 +33,6 @@ Needed before anyone but the author can use it.
 - **Fetch transcripts in the user's own browser** (their IP) and send the text to the API, instead of the server
   fetching from YouTube. This avoids the IP-block problem entirely. It depends on YouTube's internal endpoints, so keep
   the server-side fetch as a fallback and expect occasional breakage.
-- Keep the knowledge profile in `chrome.storage` and send only a short profile summary, so personal data stays local.
 - Progressive display: stream the summary first (about 10 s), then fill in fact-checks.
 - Chrome Web Store review, privacy policy, permission justification.
 
@@ -47,8 +43,6 @@ Needed before anyone but the author can use it.
   on re-run.
 - **Verdict calibration.** Most verdicts are Verified or Mostly True. There is no ground-truth set to measure accuracy;
   an evaluation set of videos with known errors would show whether "what's wrong" is trustworthy.
-- **Personalization latency.** A returning user pays one extra model call (about 3 s) when a report has candidates to
-  compare. Results are cached per (video, profile version).
 - **Reports saved before v2** still render in the old Markdown layout until re-run.
 - **Reddit** is off until API access is approved (see `SETUP_AND_KEYS.md`).
 - **Single user.** The profile and saved reports are local files.

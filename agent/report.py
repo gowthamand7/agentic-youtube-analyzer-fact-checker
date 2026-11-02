@@ -1,12 +1,11 @@
 """Report v2: structured report builder, scoring, evidence guardrails, and the Markdown renderer.
 
 The structured dict from `build_report` is the single source of truth. The web UI renders it to HTML
-(app/render.py) and applies per-user personalization; `render_markdown` serves the CLI and JSON API.
+(app/render.py); `render_markdown` serves the CLI and JSON API.
 """
 
 from __future__ import annotations
 
-import hashlib
 import re
 from typing import Any, Dict, List, Optional
 
@@ -42,11 +41,6 @@ def ts_link(video_id: str, ts: str) -> str:
     if secs is None:
         return ts or "—"
     return f"[{ts}](https://youtube.com/watch?v={video_id}&t={secs}s)"
-
-
-def item_id(video_id: str, kind: str, text: str) -> str:
-    """Stable id for a learnable item, so the UI can refer to it across sessions."""
-    return hashlib.sha1(f"{video_id}|{kind}|{text}".encode("utf-8")).hexdigest()[:10]
 
 
 def enforce_evidence(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -126,7 +120,6 @@ def build_report(state: Dict[str, Any], results: List[Dict[str, Any]], score: in
         idx = kp.get("claim_index")
         res = by_claim.get(claims[idx]["claim"]) if isinstance(idx, int) and 0 <= idx < len(claims) else None
         key_points.append({
-            "id": item_id(vid, "point", kp["point"]),
             "timestamp": kp["timestamp"], "point": kp["point"], "concept": kp["concept"], "importance": kp["importance"],
             "check": {"verdict": res["verdict"], "confidence": res["confidence"]} if res else None,
         })
@@ -134,10 +127,10 @@ def build_report(state: Dict[str, Any], results: List[Dict[str, Any]], score: in
     importance_rank = {"high": 0, "medium": 1, "low": 2}
     corrections = sorted((r for r in results if r["verdict"] in WRONG), key=lambda r: importance_rank.get(r.get("importance", "medium"), 1))
     comments = [
-        {"id": item_id(vid, "comment", c["detail"]), **{k: c[k] for k in ("category", "author", "likes", "concept", "detail")}}
+        {k: c[k] for k in ("category", "author", "likes", "concept", "detail")}
         for c in state.get("comment_insights", [])
     ]
-    outside = [{"id": item_id(vid, "outside", o["detail"]), **o} for o in clean_outside_discussion(state.get("community_insights", []))]
+    outside = [dict(o) for o in clean_outside_discussion(state.get("community_insights", []))]
     links = meta.get("links", [])
 
     return {

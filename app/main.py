@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, Optional
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -16,8 +16,6 @@ from fastapi.staticfiles import StaticFiles
 from markdown_it import MarkdownIt
 from pydantic import BaseModel
 
-from agent.knowledge import KnowledgeStore
-from agent.personalize import find_item, personalize_report
 from agent.report import timestamp_to_seconds
 from agent.report_store import load_report, video_id_from_url
 from app.render import render_report_html
@@ -35,7 +33,6 @@ PROGRESS_EVENT_TYPES = {
 }
 
 Runner = Callable[[str], AsyncGenerator[Dict[str, Any], None]]
-Personalizer = Callable[[Dict[str, Any]], Awaitable[Dict[str, Dict[str, Any]]]]
 
 # html=False escapes raw HTML in LLM-written text; markdown-it also rejects javascript: links.
 _md = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -60,23 +57,6 @@ def get_runner() -> Runner:
     from agent.graph import run_agent
 
     return run_agent
-
-
-def get_knowledge_store() -> KnowledgeStore:
-    return KnowledgeStore()
-
-
-def get_personalizer(store: KnowledgeStore = Depends(get_knowledge_store)) -> Personalizer:
-    """Annotates a report with the items this user already knows (nothing happens until they mark something)."""
-
-    async def personalize(report: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-        if not store.entries():
-            return {}
-        from agent.graph import default_llm
-
-        return await personalize_report(report, store, default_llm())
-
-    return personalize
 
 
 class AnalyzeRequest(BaseModel):
@@ -128,10 +108,10 @@ def claims_accordion(state: Dict[str, Any]) -> str:
     return '<div class="claims">' + "".join(cards) + "</div>" if cards else ""
 
 
-def report_html(state: Dict[str, Any], notes: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
-    """v2 reports render from their structure (with personalization); older stored reports fall back to Markdown."""
+def report_html(state: Dict[str, Any]) -> str:
+    """v2 reports render from their structure; older stored reports fall back to Markdown."""
     if state.get("report") and not state.get("error_message"):
-        return render_report_html(state["report"], notes)
+        return render_report_html(state["report"])
     score = state.get("overall_accuracy_score")
     head = ""
     if score is not None and not state.get("error_message"):
@@ -147,40 +127,28 @@ def report_html(state: Dict[str, Any], notes: Optional[Dict[str, Dict[str, Any]]
     return head + f'<article class="report"{aborted}>{body}</article>'
 
 
-async def _no_personalization(report: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    return {}
-
-
 def stored_report(video_url: str, refresh: bool) -> Optional[Dict[str, Any]]:
     """The previously generated report for this video, unless the caller asked for a fresh run."""
     video_id = None if refresh else video_id_from_url(video_url)
     return load_report(video_id) if video_id else None
 
 
-async def personalized_report_html(state: Dict[str, Any], personalizer: Personalizer) -> str:
-    notes = await personalizer(state["report"]) if state.get("report") and not state.get("error_message") else None
-    return report_html(state, notes)
-
-
-async def stream_events(
-    runner: Runner, video_url: str, refresh: bool = False, personalizer: Optional[Personalizer] = None
-) -> AsyncGenerator[str, None]:
+async def stream_events(runner: Runner, video_url: str, refresh: bool = False) -> AsyncGenerator[str, None]:
     """SSE frames: `agent` (JSON progress event), `cached` + `report` (stored report), `report`, `error`, then `done`.
 
     A stored report is served without running the agent; `refresh=True` forces a new analysis.
     """
-    personalizer = personalizer or _no_personalization
     stored = stored_report(video_url, refresh)
     if stored:
         meta = {"generated_at": stored["generated_at"], "video": stored.get("video", {}), "video_id": stored["state"].get("video_id")}
         yield sse("cached", json.dumps(meta, ensure_ascii=False))
-        yield sse("report", await personalized_report_html(stored["state"], personalizer))
+        yield sse("report", report_html(stored["state"]))
         yield sse("done", "complete")
         return
     try:
         async for event in runner(video_url):
             if event.get("type") == "final":
-                yield sse("report", await personalized_report_html(event["state"], personalizer))
+                yield sse("report", report_html(event["state"]))
             elif event.get("type") in PROGRESS_EVENT_TYPES:
                 yield sse("agent", json.dumps(event, ensure_ascii=False, default=str))
     except Exception as exc:
@@ -194,26 +162,22 @@ async def analyze_stream(
     video_url: str = Depends(valid_video_url),
     refresh: bool = False,
     runner: Runner = Depends(get_runner),
-    personalizer: Personalizer = Depends(get_personalizer),
 ):
     return StreamingResponse(
-        stream_events(runner, video_url, refresh, personalizer),
+        stream_events(runner, video_url, refresh),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
 @app.post("/api/analyze")
-async def analyze(
-    body: AnalyzeRequest, runner: Runner = Depends(get_runner), personalizer: Personalizer = Depends(get_personalizer)
-):
+async def analyze(body: AnalyzeRequest, runner: Runner = Depends(get_runner)):
     video_url = valid_video_url(body.video_url)
     stored = stored_report(video_url, body.refresh)
     if stored:
         state = stored["state"]
         return {
             "report": state.get("report"),
-            "known": await personalizer(state["report"]) if state.get("report") else {},
             "report_md": state.get("final_report_md", ""),
             "overall_accuracy_score": state.get("overall_accuracy_score"),
             "saved_to_memory": state.get("saved_to_memory", False),
@@ -231,7 +195,6 @@ async def analyze(
         raise HTTPException(status_code=502, detail=f"Analysis failed: {exc}") from exc
     return {
         "report": final.get("report"),
-        "known": await personalizer(final["report"]) if final.get("report") else {},
         "report_md": final.get("final_report_md", ""),
         "overall_accuracy_score": final.get("overall_accuracy_score"),
         "saved_to_memory": final.get("saved_to_memory", False),
@@ -239,34 +202,6 @@ async def analyze(
         "cached": False,
         "generated_at": None,
     }
-
-
-class KnowOrder(BaseModel):
-    video_id: str
-    item_id: str
-
-
-@app.get("/api/knowledge")
-async def list_knowledge(store: KnowledgeStore = Depends(get_knowledge_store)):
-    return {"entries": store.entries()}
-
-
-@app.post("/api/knowledge")
-async def mark_known(order: KnowOrder, store: KnowledgeStore = Depends(get_knowledge_store)):
-    """Record "I already know this". Text comes from the stored report, never from the client, so it cannot be forged."""
-    stored = load_report(order.video_id)
-    report = (stored or {}).get("state", {}).get("report")
-    item = find_item(report, order.item_id) if report else None
-    if not item:
-        raise HTTPException(status_code=404, detail="No such item in the saved report for that video")
-    return store.add(item["concept"], item["text"], report.get("topic_tags", []), order.video_id, report.get("title", ""))
-
-
-@app.delete("/api/knowledge/{entry_id}")
-async def forget_known(entry_id: str, store: KnowledgeStore = Depends(get_knowledge_store)):
-    if not re.fullmatch(r"[a-f0-9]{10}", entry_id) or not store.remove(entry_id):
-        raise HTTPException(status_code=404, detail="No such knowledge entry")
-    return {"removed": entry_id}
 
 
 @app.get("/")
