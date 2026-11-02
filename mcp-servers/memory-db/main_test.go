@@ -447,4 +447,3 @@ func TestLoadConfigFromEnv(t *testing.T) {
 		t.Errorf("config mismatch: %+v", cfg)
 	}
 }
-

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from agent.report import timestamp_to_seconds
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("app")
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -25,7 +26,7 @@ YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtu
 VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
 
 PROGRESS_EVENT_TYPES = {
-    "node_start", "node_end", "tool_start", "tool_end", "note", "video", "overview", "claims", "verdict",
+    "request", "node_start", "node_end", "tool_start", "tool_end", "note", "video", "overview", "claims", "verdict",
 }
 
 Runner = Callable[[str], AsyncGenerator[Dict[str, Any], None]]

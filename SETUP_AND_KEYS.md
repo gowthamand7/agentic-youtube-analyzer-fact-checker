@@ -95,3 +95,19 @@ go test ./mcp-servers/memory-db/... ./mcp-servers/sandbox/... ./mcp-servers/veri
 Notes:
 - Reddit uses the official API (`REDDIT_CLIENT_ID`/`SECRET`, app-only OAuth). Without valid credentials the Reddit platform returns an error entry and the other platforms still work. Set `REDDIT_TAVILY_FALLBACK=1` to instead search Reddit via Tavily (`include_domains=reddit.com`, 1 credit per lookup).
 - YouTube may rate-limit transcript requests from your IP after repeated runs; the analysis then aborts with a clear message.
+
+---
+
+## 5. Debugging a Request
+
+Every analysis (UI, API, or CLI) writes a JSONL log to `logs/<timestamp>_<request-id>.jsonl` (git-ignored) and prints one console line per event prefixed with `[request-id]`. The UI shows the request ID next to the step count.
+
+```powershell
+uv run python scripts/show_log.py            # timeline of the latest request
+uv run python scripts/show_log.py a1b2c3d4   # a specific request ID
+uv run python scripts/show_log.py latest -v  # also tool args/results and LLM outputs
+```
+
+Logged: tool calls (arguments, truncated result, duration, traceback on failure), LLM calls (purpose, prompt size, structured output, duration), each model tool-call round, verdicts, node transitions, and the final status (`ok`, `aborted`, `request_error`, `request_cancelled` for a closed browser tab).
+
+Env: `LOG_DIR` changes the directory; `LOG_PROMPTS=1` also records the full LLM prompts (large, may include transcript text).

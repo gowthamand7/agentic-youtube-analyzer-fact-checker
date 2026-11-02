@@ -261,3 +261,74 @@ def test_narration_describes_tools_in_plain_language():
     assert describe_end("get_transcript", {"status": "OK", "segments": [1, 2], "language": "en"}) == (True, "2 lines (en)")
     assert describe_end("get_comments", {"status": "ERROR", "message": "quota"}) == (False, "quota")
     assert describe_end("execute_python_audit", {"stdout": "56088\n", "exit_code": 0}) == (True, "Result: 56088")
+
+
+def _read_log(path):
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+async def test_each_run_writes_a_debug_log_with_tool_details(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    calls: List = []
+    llm = FakeLLM(
+        {ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
+        tool_turns=[
+            AIMessage(content="", tool_calls=[{"name": "search_web_factcheck", "args": {"query": "x faster"}, "id": "1"}]),
+            AIMessage(content="done"),
+        ],
+    )
+    events, _ = await run(build_graph(make_tools(calls), llm))
+
+    request = next(e for e in events if e["type"] == "request")
+    files = list(tmp_path.glob("*.jsonl"))
+    assert [f.name for f in files] == [request["log_file"]] and request["id"] in files[0].name
+    records = _read_log(files[0])
+    assert {r["rid"] for r in records} == {request["id"]}
+    assert records[0]["event"] == "request_start" and records[-1]["event"] == "request_end"
+    assert records[-1]["status"] == "ok" and records[-1]["score"] == 35
+
+    tool = next(r for r in records if r["event"] == "tool_call" and r["tool"] == "search_web_factcheck")
+    assert "x faster" in tool["args"] and tool["ok"] is True and tool["duration_ms"] >= 0 and "docs.x/bench" in tool["result"]
+    llm_call = next(r for r in records if r["event"] == "llm_call" and "transcript" in r["purpose"])
+    assert llm_call["prompt_chars"] > 0 and "clickbait" in llm_call["output"]
+    assert llm_call["prompt"] is None  # full prompts only with LOG_PROMPTS=1
+    assert any(r["event"] == "verdict" and r["verdict"] == "Partially False" for r in records)
+    assert any(r["event"] == "llm_turn" for r in records)
+    assert [r["t_ms"] for r in records] == sorted(r["t_ms"] for r in records)
+
+
+async def test_failed_tool_is_logged_with_traceback(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    tools = make_tools([], {"get_channel_history": RuntimeError("db down")})
+    llm = FakeLLM({ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    await run(build_graph(tools, llm))
+    records = _read_log(next(tmp_path.glob("*.jsonl")))
+    failed = next(r for r in records if r["event"] == "tool_call" and r["tool"] == "get_channel_history")
+    assert failed["ok"] is False and "RuntimeError: db down" in failed["error"]
+
+
+async def test_unhandled_error_is_logged_and_reraised(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    llm = FakeLLM({ExtractionOutput: [RuntimeError("anthropic 500")]})
+    with pytest.raises(Exception, match="anthropic 500"):
+        await run(build_graph(make_tools([]), llm))
+    records = _read_log(next(tmp_path.glob("*.jsonl")))
+    assert records[-1]["event"] == "request_error" and "anthropic 500" in records[-1]["error"]
+    assert any(r["event"] == "llm_call" and r["ok"] is False for r in records)
+
+
+def test_plain_text_tool_failure_is_not_reported_as_success():
+    from agent.narration import describe_end
+
+    ok, summary = describe_end("get_channel_history", {"raw": "database error fetching channel history: boom"})
+    assert ok is False and "boom" in summary
+
+
+async def test_unparseable_history_is_ignored_and_logged_as_failed(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    tools = make_tools([], {"get_channel_history": "database error: boom"})
+    llm = FakeLLM({ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    _, state = await run(build_graph(tools, llm))
+    assert state["channel_history"] == {}
+    failed = next(r for r in _read_log(next(tmp_path.glob("*.jsonl"))) if r.get("tool") == "get_channel_history")
+    assert failed["ok"] is False and "boom" in failed["summary"]

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -204,16 +205,19 @@ func (db *ClickHouseDB) GetChannelHistory(ctx context.Context, channelID string)
 	WHERE channel_id = ?
 	`, db.database)
 	row := db.conn.QueryRow(ctx, aggQuery, channelID)
-	var total int
+	// count()/countIf() are UInt64 in ClickHouse; clickhouse-go refuses to scan them into int.
+	var total, sponsoredCount uint64
 	var avgScore float64
-	var sponsoredCount int
 	if err := row.Scan(&total, &avgScore, &sponsoredCount); err != nil {
 		return nil, fmt.Errorf("failed querying channel aggregates: %w", err)
 	}
 
-	history.TotalVideosAnalyzed = total
+	if math.IsNaN(avgScore) { // avg() over zero rows is NaN, which JSON cannot encode
+		avgScore = 0
+	}
+	history.TotalVideosAnalyzed = int(total)
 	history.AvgAccuracyScore = avgScore
-	history.SponsoredVideosCount = sponsoredCount
+	history.SponsoredVideosCount = int(sponsoredCount)
 
 	if total == 0 {
 		return history, nil

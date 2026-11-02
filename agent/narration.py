@@ -43,6 +43,8 @@ def describe_end(tool: str, result: Any) -> Tuple[bool, str]:
     """Return (ok, one-line summary) for a finished tool call."""
     if isinstance(result, dict) and result.get("status") == "ERROR":
         return False, _short(result.get("message", "failed"), 140)
+    if isinstance(result, dict) and set(result) == {"raw"}:  # MCP tools report failures as plain, non-JSON text
+        return False, _short(result["raw"], 140)
     r = result if isinstance(result, dict) else {}
     if tool == "get_video_metadata":
         return True, f"“{_short(r.get('title', ''), 70)}” by {r.get('channel_name', 'unknown')}"

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+import traceback
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Mapping
@@ -13,6 +15,7 @@ from langgraph.config import get_stream_writer
 
 from agent import prompts
 from agent.narration import describe_end, describe_start
+from agent.runlog import clip, log_event, log_prompts_enabled
 from agent.report import (
     TRANSCRIPT_ERROR,
     build_save_payload,
@@ -85,13 +88,19 @@ class AgentNodes:
         call_id = uuid.uuid4().hex[:8]
         title, detail = describe_start(name, args)
         emit({"type": "tool_start", "id": call_id, "tool": name, "title": title, "detail": detail})
+        started, error = time.monotonic(), None
         try:
             if name not in self.tools:
                 raise KeyError(f"tool {name!r} is not available")
             result = parse_tool_result(await self.tools[name].ainvoke(args))
         except Exception as exc:  # tool failures degrade the analysis instead of aborting it
             result = {"status": "ERROR", "message": f"{type(exc).__name__}: {exc}"}
+            error = traceback.format_exc()
         ok, summary = describe_end(name, result)
+        log_event(
+            "tool_call", id=call_id, tool=name, args=clip(args, 1500), ok=ok, summary=summary,
+            duration_ms=round((time.monotonic() - started) * 1000), result=clip(result), error=error,
+        )
         emit({"type": "tool_end", "id": call_id, "tool": name, "ok": ok, "summary": summary})
         return result
 
@@ -99,14 +108,24 @@ class AgentNodes:
     async def _thinking(self, title: str, detail: str | None = None):
         """Timeline step for an LLM call, so the UI shows the agent working between tool calls."""
         step_id = uuid.uuid4().hex[:8]
-        info = {"summary": "Done"}
+        info: Dict[str, Any] = {"summary": "Done"}
+        started = time.monotonic()
         emit({"type": "tool_start", "id": step_id, "tool": "thinking", "title": title, "detail": detail})
         try:
             yield info
         except Exception:
             emit({"type": "tool_end", "id": step_id, "tool": "thinking", "ok": False, "summary": "Failed"})
+            log_event(
+                "llm_call", id=step_id, purpose=title, ok=False,
+                duration_ms=round((time.monotonic() - started) * 1000), error=traceback.format_exc(),
+            )
             raise
         emit({"type": "tool_end", "id": step_id, "tool": "thinking", "ok": True, "summary": info["summary"]})
+        log_event(
+            "llm_call", id=step_id, purpose=title, ok=True, duration_ms=round((time.monotonic() - started) * 1000),
+            summary=info["summary"], prompt_chars=info.get("prompt_chars"), output=clip(info.get("output", "")),
+            prompt=info.get("prompt") if log_prompts_enabled() else None,
+        )
 
     # ---- Node 1 -------------------------------------------------------------------------------
     async def triage_node(self, state: AgentState) -> Dict[str, Any]:
@@ -116,7 +135,7 @@ class AgentNodes:
             message = (meta or {}).get("message", "unknown error") if isinstance(meta, dict) else str(meta)
             return {"error_message": f"Could not load video metadata: {message}", "retry_count": 0}
         history = await self._call("get_channel_history", {"channel_id": meta["channel_id"]})
-        if not isinstance(history, dict) or history.get("status") == "ERROR":
+        if not isinstance(history, dict) or history.get("status") == "ERROR" or "raw" in history:
             history = {}
         emit({"type": "video", "title": meta["title"], "channel": meta["channel_name"], "upload_date": meta["upload_date"][:10]})
         return {"video_id": meta["video_id"], "metadata": meta, "channel_history": history, "retry_count": 0}
@@ -161,9 +180,11 @@ class AgentNodes:
         async with self._thinking(
             "Reading the transcript for clickbait, sponsors and checkable claims", "this can take a few seconds"
         ) as step:
+            step["prompt_chars"], step["prompt"] = len(human), human
             out: ExtractionOutput = await self.llm.with_structured_output(ExtractionOutput).ainvoke(
                 [SystemMessage(content=prompts.EXTRACTION_SYSTEM), HumanMessage(content=human)]
             )
+            step["output"] = out.model_dump_json()
             step["summary"] = f"Found {len(out.claims)} claim{'s' if len(out.claims) != 1 else ''} to verify"
         summary = out.model_dump()
         claims = summary.pop("claims")
@@ -207,9 +228,13 @@ class AgentNodes:
             emit({"type": "note", "text": f"Investigating: “{c['claim']}”" + (f" — new angle: {c['suggested_query']}" if feedback else "")})
 
         bound = self.llm.bind_tools([self.tools[n] for n in INVESTIGATION_TOOLS if n in self.tools])
-        for _ in range(self.max_tool_rounds):
+        for round_no in range(self.max_tool_rounds):
             ai: AIMessage = await bound.ainvoke(messages)
             messages.append(ai)
+            log_event(
+                "llm_turn", round=round_no, text=clip(_ai_text(ai), 1000),
+                tool_calls=[{"name": tc["name"], "args": clip(tc["args"], 500)} for tc in ai.tool_calls],
+            )
             if ai.tool_calls and (commentary := _ai_text(ai)):
                 emit({"type": "note", "text": commentary})
             if not ai.tool_calls:
@@ -223,6 +248,7 @@ class AgentNodes:
             out: VerificationOutput = await self.llm.with_structured_output(VerificationOutput).ainvoke(
                 _without_thinking(messages)
             )
+            step["output"] = out.model_dump_json()
             step["summary"] = f"{len(out.results)} verdict{'s' if len(out.results) != 1 else ''} drafted"
 
         merged = {r["claim"]: r for r in state.get("verification_results", [])}
@@ -244,6 +270,7 @@ class AgentNodes:
 
         for r in results:
             emit({"type": "verdict", "result": r})
+            log_event("verdict", claim=r["claim"], verdict=r["verdict"], confidence=r["confidence"], sources=r["sources"])
 
         seen = {a["detail"] for a in state.get("community_insights", [])}
         insights = list(state.get("community_insights", [])) + [
@@ -277,13 +304,14 @@ class AgentNodes:
             }
         )
         try:
-            async with self._thinking("Reviewing weak results and rewriting the searches"):
+            async with self._thinking("Reviewing weak results and rewriting the searches") as step:
                 out: CriticOutput = await self.llm.with_structured_output(CriticOutput).ainvoke(
                     [
                         SystemMessage(content=prompts.CRITIC_SYSTEM),
                         HumanMessage(content=json.dumps([{"claim": r["claim"], "evidence": r["evidence"]} for r in weak], ensure_ascii=False)),
                     ]
                 )
+            step["output"] = out.model_dump_json()
             queries = {w.claim: w.suggested_query for w in out.weak_claims}
         except Exception:
             queries = {}

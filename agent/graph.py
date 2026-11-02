@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import time
+import traceback
 from typing import Any, AsyncGenerator, Dict, Mapping
 
 from langgraph.graph import END, START, StateGraph
 
 from agent.mcp_client import open_tools
 from agent.nodes import AgentNodes
+from agent.runlog import end_run, start_run
 from agent.state import AgentState
 
 
@@ -48,16 +52,39 @@ def default_llm() -> Any:
 
 
 async def stream_graph(graph: Any, video_url: str) -> AsyncGenerator[Dict[str, Any], None]:
-    """Yield progress events ({'type': ...}) and finally {'type': 'final', 'state': {...}}."""
+    """Yield progress events ({'type': ...}) and finally {'type': 'final', 'state': {...}}.
+
+    Every run writes a per-request JSONL debug log (see agent/runlog.py).
+    """
+    run = start_run(video_url)
+    started = time.monotonic()
     final: Dict[str, Any] = {}
-    async for mode, chunk in graph.astream({"video_url": video_url}, stream_mode=["custom", "updates"]):
-        if mode == "custom":
-            yield chunk
-        else:
-            for node_name, update in chunk.items():
-                final.update(update or {})
-                yield {"type": "node_end", "node": node_name}
-    yield {"type": "final", "state": final}
+    yield {"type": "request", "id": run.rid, "log_file": run.path.name}
+    try:
+        async for mode, chunk in graph.astream({"video_url": video_url}, stream_mode=["custom", "updates"]):
+            if mode == "custom":
+                if chunk.get("type") not in ("tool_start", "tool_end", "verdict"):  # these have richer dedicated lines
+                    run.write("progress", **chunk)
+                yield chunk
+            else:
+                for node_name, update in chunk.items():
+                    final.update(update or {})
+                    run.write("node_end", node=node_name, state_keys=sorted((update or {}).keys()))
+                    yield {"type": "node_end", "node": node_name}
+        run.write(
+            "request_end", status="aborted" if final.get("error_message") else "ok", error=final.get("error_message"),
+            score=final.get("overall_accuracy_score"), saved_to_memory=final.get("saved_to_memory"),
+            duration_ms=round((time.monotonic() - started) * 1000),
+        )
+        yield {"type": "final", "state": final}
+    except (asyncio.CancelledError, GeneratorExit):
+        run.write("request_cancelled", reason="client disconnected or task cancelled")
+        raise
+    except Exception:
+        run.write("request_error", error=traceback.format_exc(), duration_ms=round((time.monotonic() - started) * 1000))
+        raise
+    finally:
+        end_run(run)
 
 
 async def run_agent(video_url: str) -> AsyncGenerator[Dict[str, Any], None]:

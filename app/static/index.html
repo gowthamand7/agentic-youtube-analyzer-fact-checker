@@ -97,7 +97,8 @@
 
       function tick() {
         var secs = Math.round((Date.now() - startedAt) / 1000);
-        $("activity-meta").textContent = stepCount + " steps · " + secs + "s";
+        var rid = $("activity-meta").dataset.rid;
+        $("activity-meta").textContent = stepCount + " steps · " + secs + "s" + (rid ? " · req " + rid : "");
       }
 
       function follow() {
@@ -204,7 +205,13 @@
         card.appendChild(meta);
       }
 
+      function onRequest(e) {
+        $("activity").querySelector(".activity-title").title = "Debug log: logs/" + e.log_file;
+        $("activity-meta").dataset.rid = e.id;
+      }
+
       var HANDLERS = {
+        request: onRequest,
         node_start: onNodeStart, tool_start: onToolStart, tool_end: onToolEnd, note: onNote,
         video: onVideo, overview: onOverview, claims: onClaims, verdict: onVerdict
       };
