@@ -100,7 +100,8 @@ func getEnvOrDefault(key, defaultVal string) string {
 
 // ClickHouseDB is the native ClickHouse client implementation of DBService.
 type ClickHouseDB struct {
-	conn driver.Conn
+	conn     driver.Conn
+	database string
 }
 
 // NewClickHouseDB initializes a pooled native TCP ClickHouse connection.
@@ -121,7 +122,7 @@ func NewClickHouseDB(cfg *Config) (*ClickHouseDB, error) {
 		return nil, fmt.Errorf("clickhouse open connection error: %w", err)
 	}
 
-	return &ClickHouseDB{conn: conn}, nil
+	return &ClickHouseDB{conn: conn, database: cfg.Database}, nil
 }
 
 // Close closes the underlying ClickHouse connection pool.
@@ -146,13 +147,13 @@ func (db *ClickHouseDB) InitSchema(ctx context.Context) error {
 		return fmt.Errorf("clickhouse connection is nil")
 	}
 
-	createDB := `CREATE DATABASE IF NOT EXISTS youtube_agent;`
+	createDB := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s;", db.database)
 	if err := db.conn.Exec(ctx, createDB); err != nil {
 		return fmt.Errorf("failed to ensure database exists: %w", err)
 	}
 
-	createTable := `
-	CREATE TABLE IF NOT EXISTS youtube_agent.video_analyses (
+	createTable := fmt.Sprintf(`
+	CREATE TABLE IF NOT EXISTS %s.video_analyses (
 		channel_id LowCardinality(String),
 		channel_name String,
 		video_id String,
@@ -168,7 +169,7 @@ func (db *ClickHouseDB) InitSchema(ctx context.Context) error {
 	)
 	ENGINE = ReplacingMergeTree(analyzed_at)
 	ORDER BY (channel_id, video_id);
-	`
+	`, db.database)
 	if err := db.conn.Exec(ctx, createTable); err != nil {
 		return fmt.Errorf("failed to ensure video_analyses table exists: %w", err)
 	}
@@ -194,14 +195,14 @@ func (db *ClickHouseDB) GetChannelHistory(ctx context.Context, channelID string)
 	}
 
 	// 1. Query aggregate counts
-	aggQuery := `
+	aggQuery := fmt.Sprintf(`
 	SELECT
 		count() AS total_videos_analyzed,
 		coalesce(round(avg(overall_accuracy_score), 1), 0.0) AS avg_accuracy_score,
 		countIf(has_paid_promotion = 1) AS sponsored_videos_count
-	FROM youtube_agent.video_analyses FINAL
+	FROM %s.video_analyses FINAL
 	WHERE channel_id = ?
-	`
+	`, db.database)
 	row := db.conn.QueryRow(ctx, aggQuery, channelID)
 	var total int
 	var avgScore float64
@@ -219,7 +220,7 @@ func (db *ClickHouseDB) GetChannelHistory(ctx context.Context, channelID string)
 	}
 
 	// 2. Query recent evaluation runs and extract frequent sponsors & collaborators
-	runsQuery := `
+	runsQuery := fmt.Sprintf(`
 	SELECT
 		video_id,
 		video_title,
@@ -228,11 +229,11 @@ func (db *ClickHouseDB) GetChannelHistory(ctx context.Context, channelID string)
 		analyzed_at,
 		sponsors,
 		collaborators
-	FROM youtube_agent.video_analyses FINAL
+	FROM %s.video_analyses FINAL
 	WHERE channel_id = ?
 	ORDER BY analyzed_at DESC
 	LIMIT 10
-	`
+	`, db.database)
 	rows, err := db.conn.Query(ctx, runsQuery, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("failed querying recent channel runs: %w", err)
@@ -307,8 +308,8 @@ func (db *ClickHouseDB) SaveVideoAnalysis(ctx context.Context, record *VideoAnal
 		record.AnalyzedAt = time.Now().UTC()
 	}
 
-	insertSQL := `
-	INSERT INTO youtube_agent.video_analyses (
+	insertSQL := fmt.Sprintf(`
+	INSERT INTO %s.video_analyses (
 		channel_id,
 		channel_name,
 		video_id,
@@ -322,7 +323,7 @@ func (db *ClickHouseDB) SaveVideoAnalysis(ctx context.Context, record *VideoAnal
 		analysis_payload,
 		analyzed_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
+	`, db.database)
 
 	err := db.conn.Exec(ctx, insertSQL,
 		record.ChannelID,
@@ -356,18 +357,18 @@ func (db *ClickHouseDB) QueryHistoricalClaims(ctx context.Context, topicTag stri
 		limit = 10
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 	SELECT
 		video_id,
 		video_title,
 		topic_tags,
 		analysis_payload,
 		analyzed_at
-	FROM youtube_agent.video_analyses FINAL
+	FROM %s.video_analyses FINAL
 	WHERE has(topic_tags, ?) OR arrayExists(x -> lower(x) = lower(?), topic_tags)
 	ORDER BY analyzed_at DESC
 	LIMIT ?
-	`
+	`, db.database)
 
 	rows, err := db.conn.Query(ctx, query, topicTag, topicTag, limit*2)
 	if err != nil {
