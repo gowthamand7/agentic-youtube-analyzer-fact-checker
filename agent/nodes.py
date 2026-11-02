@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 import traceback
 import uuid
@@ -11,20 +12,23 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Mapping
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.exceptions import OutputParserException
 from langgraph.config import get_stream_writer
+from pydantic import ValidationError
 
 from agent import prompts
 from agent.narration import describe_end, describe_start
 from agent.runlog import clip, clip_obj, log_event, log_prompts_enabled
 from agent.report import (
     TRANSCRIPT_ERROR,
+    build_report,
     build_save_payload,
     compute_accuracy_score,
     enforce_evidence,
     render_error_report,
-    render_report,
+    render_markdown,
 )
-from agent.schemas import CriticOutput, ExtractionOutput, VerificationOutput
+from agent.schemas import CommentsAnalysis, CriticOutput, VerificationOutput, VideoAnalysis
 from agent.state import MAX_RETRIES, AgentState
 
 INVESTIGATION_TOOLS = ("search_web_factcheck", "search_social_reactions", "execute_python_audit", "query_historical_claims")
@@ -78,6 +82,25 @@ def _ai_text(ai: AIMessage) -> str:
     return "".join(b.get("text", "") for b in ai.content if isinstance(b, dict) and b.get("type") == "text").strip()
 
 
+def claim_cap(segments: List[Dict[str, Any]]) -> int:
+    """How many claims to fact-check: scales with video length (about one per 4 minutes), 3 to 8."""
+    minutes = (segments[-1].get("start_sec", 0) / 60) if segments else 0
+    return max(3, min(8, 2 + int(minutes // 4)))
+
+
+ABSENCE = re.compile(r"^(the video |this video )?(contains |has |includes |there (is|are) )?(no|none|n/a|nothing)\b", re.IGNORECASE)
+
+
+def drop_empty_sections(sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Remove dynamic sections that carry nothing: no items, or only statements that something is absent."""
+    kept = []
+    for sec in sections:
+        items = [it for it in sec["items"] if it["text"].strip() and not ABSENCE.match(it["text"].strip())]
+        if items:
+            kept.append({**sec, "items": items})
+    return kept
+
+
 class AgentNodes:
     def __init__(self, tools: Mapping[str, Any], llm: Any, max_tool_rounds: int = MAX_TOOL_ROUNDS) -> None:
         self.tools = tools
@@ -104,6 +127,19 @@ class AgentNodes:
         )
         emit({"type": "tool_end", "id": call_id, "tool": name, "ok": ok, "summary": summary})
         return result
+
+    async def _structured(self, schema: Any, messages: List[BaseMessage]) -> Any:
+        """Structured LLM call that retries once, feeding the validation error back, when the model skips a field."""
+        runnable = self.llm.with_structured_output(schema)
+        try:
+            return await runnable.ainvoke(messages)
+        except (ValidationError, OutputParserException) as exc:
+            log_event("structured_retry", schema=schema.__name__, error=clip(str(exc), 800))
+            fix = HumanMessage(
+                content="Your previous answer failed validation:\n" + clip(str(exc), 600)
+                + "\nReturn the COMPLETE object again, with every required field."
+            )
+            return await runnable.ainvoke(list(messages) + [fix])
 
     def _model_name(self) -> str:
         return str(getattr(self.llm, "model", None) or getattr(self.llm, "model_name", None) or type(self.llm).__name__)
@@ -177,39 +213,73 @@ class AgentNodes:
             "chapters": meta["chapters"],
             "channel_history": {k: history.get(k) for k in ("total_videos_analyzed", "avg_accuracy_score", "frequent_sponsors")},
         }
+        cap = claim_cap(transcript["segments"])
         human = (
             f"VIDEO METADATA:\n{json.dumps(brief, ensure_ascii=False)}\n\n"
-            f"TRANSCRIPT (language={transcript['language']}):\n{transcript_text}\n\n"
-            f"TOP VIEWER COMMENTS:\n{chr(10).join(comment_lines) or '(none available)'}"
+            f"Return at most {cap} claims.\n\n"
+            f"TRANSCRIPT (language={transcript['language']}):\n{transcript_text}"
         )
-        async with self._thinking(
-            "Reading the transcript for clickbait, sponsors and checkable claims", "this can take a few seconds",
-            input_chars=len(human),
-        ) as step:
-            step["prompt_chars"], step["prompt"] = len(human), human
-            out: ExtractionOutput = await self.llm.with_structured_output(ExtractionOutput).ainvoke(
-                [SystemMessage(content=prompts.EXTRACTION_SYSTEM), HumanMessage(content=human)]
-            )
-            step["output"] = out.model_dump_json()
-            step["summary"] = f"Found {len(out.claims)} claim{'s' if len(out.claims) != 1 else ''} to verify"
-        summary = out.model_dump()
-        claims = summary.pop("claims")
+
+        analysis, comment_out = await asyncio.gather(
+            self._analyze_video(human), self._analyze_comments(meta["title"], comment_lines)
+        )
+
+        summary = analysis.model_dump()
+        if not summary["topic_tags"]:  # the model skipped them: derive from the key ideas so memory lookups still work
+            summary["topic_tags"] = list(dict.fromkeys(kp["concept"].lower() for kp in summary["key_points"]))[:3]
+        summary["extra_sections"] = drop_empty_sections(summary["extra_sections"])
+        summary["bias_notes"] = "" if ABSENCE.match(summary["bias_notes"].strip()) else summary["bias_notes"]
+        claims = summary.pop("claims")[:cap]
+        emit({"type": "summary", "video_type": analysis.video_type, "tldr": analysis.tldr, "key_points": summary["key_points"]})
         emit(
             {
                 "type": "overview",
-                "domain": out.domain,
+                "domain": analysis.video_type,
                 "clickbait": summary["clickbait"],
                 "sponsors": [s["name"] for s in summary["sponsors"]],
-                "has_paid_promotion": out.has_paid_promotion,
-                "bias_notes": out.bias_notes,
+                "has_paid_promotion": analysis.has_paid_promotion,
+                "bias_notes": analysis.bias_notes,
             }
         )
         emit({"type": "claims", "claims": claims})
+        insights = [c.model_dump() for c in comment_out.insights if c.adds_information] if comment_out else []
+        if insights:
+            emit({"type": "comments", "insights": insights})
         return {
             "transcript_summary": summary,
             "extracted_claims": claims,
-            "metadata": {**meta, "domain": out.domain},
+            "comment_insights": insights,
+            "metadata": {**meta, "video_type": analysis.video_type},
         }
+
+    async def _analyze_video(self, human: str) -> VideoAnalysis:
+        async with self._thinking(
+            "Summarizing the video and picking out claims worth checking", "this can take a few seconds", input_chars=len(human)
+        ) as step:
+            step["prompt_chars"], step["prompt"] = len(human), human
+            out: VideoAnalysis = await self._structured(VideoAnalysis, 
+                [SystemMessage(content=prompts.ANALYSIS_SYSTEM), HumanMessage(content=human)]
+            )
+            step["output"] = out.model_dump_json()
+            step["summary"] = f"{len(out.key_points)} key points, {len(out.claims)} claim{'s' if len(out.claims) != 1 else ''} to verify"
+        return out
+
+    async def _analyze_comments(self, title: str, comment_lines: List[str]) -> CommentsAnalysis | None:
+        if not comment_lines:
+            return None
+        human = f"VIDEO TITLE: {title}\n\nTOP VIEWER COMMENTS:\n" + "\n".join(comment_lines)
+        try:
+            async with self._thinking("Reading the comments for corrections, fixes and extra context", input_chars=len(human)) as step:
+                step["prompt_chars"], step["prompt"] = len(human), human
+                out: CommentsAnalysis = await self._structured(CommentsAnalysis, 
+                    [SystemMessage(content=prompts.COMMENTS_SYSTEM), HumanMessage(content=human)]
+                )
+                step["output"] = out.model_dump_json()
+                n = len(out.insights)
+                step["summary"] = f"{n} comment{'s' if n != 1 else ''} added information" if n else "No comments added information"
+            return out
+        except Exception:  # the comments are a bonus; never fail the analysis over them
+            return None
 
     # ---- Node 3 -------------------------------------------------------------------------------
     async def investigator_node(self, state: AgentState) -> Dict[str, Any]:
@@ -226,7 +296,7 @@ class AgentNodes:
         else:
             task = "Investigate these claims:\n" + json.dumps(state["extracted_claims"], ensure_ascii=False)
         human = (
-            f"Video: {state['metadata']['title']} (domain: {state['metadata'].get('domain', 'unknown')})\n"
+            f"Video: {state['metadata']['title']} (type: {state['metadata'].get('video_type', 'unknown')})\n"
             f"Topic tags: {summary.get('topic_tags', [])}\n\n{task}"
         )
         messages: List[BaseMessage] = [SystemMessage(content=prompts.INVESTIGATOR_SYSTEM), HumanMessage(content=human)]
@@ -254,7 +324,7 @@ class AgentNodes:
         async with self._thinking(
             "Weighing the evidence and writing verdicts", input_chars=sum(len(str(m.content)) for m in messages)
         ) as step:
-            out: VerificationOutput = await self.llm.with_structured_output(VerificationOutput).ainvoke(
+            out: VerificationOutput = await self._structured(VerificationOutput, 
                 _without_thinking(messages)
             )
             step["output"] = out.model_dump_json()
@@ -265,27 +335,25 @@ class AgentNodes:
             merged[r.claim] = enforce_evidence(r.model_dump())
         results = []
         for c in state["extracted_claims"]:  # every extracted claim gets a verdict, even if the LLM skipped it
-            results.append(
-                merged.get(c["claim"])
-                or {
-                    "timestamp": c["timestamp"],
-                    "claim": c["claim"],
-                    "verdict": "Unverified",
-                    "evidence": "Lacks evidence: the claim was not investigated.",
-                    "sources": [],
-                    "confidence": "low",
-                }
-            )
+            result = merged.get(c["claim"]) or {
+                "timestamp": c["timestamp"],
+                "claim": c["claim"],
+                "verdict": "Unverified",
+                "evidence": "Lacks evidence: the claim was not investigated.",
+                "sources": [],
+                "confidence": "low",
+            }
+            results.append({**result, "importance": c.get("importance", "medium")})
 
         for r in results:
             emit({"type": "verdict", "result": r})
             log_event("verdict", claim=r["claim"], verdict=r["verdict"], confidence=r["confidence"], sources=r["sources"])
 
         seen = {a["detail"] for a in state.get("community_insights", [])}
-        insights = list(state.get("community_insights", [])) + [
-            a.model_dump() for a in out.community_insights if a.detail not in seen
+        outside = list(state.get("community_insights", [])) + [
+            a.model_dump() for a in out.outside_discussion if a.detail not in seen
         ]
-        return {"verification_results": results, "community_insights": insights}
+        return {"verification_results": results, "community_insights": outside}
 
     async def _run_tool_call(self, tool_call: Dict[str, Any], retry: int) -> ToolMessage:
         args = dict(tool_call["args"])
@@ -300,7 +368,10 @@ class AgentNodes:
     async def critic_node(self, state: AgentState) -> Dict[str, Any]:
         emit({"type": "node_start", "node": "critic"})
         retry = state.get("retry_count", 0)
-        weak = [r for r in state.get("verification_results", []) if r["verdict"] == "Unverified" or r["confidence"] == "low"]
+        weak = [
+            r for r in state.get("verification_results", [])
+            if (r["verdict"] == "Unverified" or r["confidence"] == "low") and r.get("importance", "medium") != "low"
+        ]  # a low-importance passing remark is not worth another round of searches
         if not weak or retry >= MAX_RETRIES:
             return {"critic_feedback": []}
 
@@ -314,7 +385,7 @@ class AgentNodes:
         )
         try:
             async with self._thinking("Reviewing weak results and rewriting the searches") as step:
-                out: CriticOutput = await self.llm.with_structured_output(CriticOutput).ainvoke(
+                out: CriticOutput = await self._structured(CriticOutput, 
                     [
                         SystemMessage(content=prompts.CRITIC_SYSTEM),
                         HumanMessage(content=json.dumps([{"claim": r["claim"], "evidence": r["evidence"]} for r in weak], ensure_ascii=False)),
@@ -340,10 +411,16 @@ class AgentNodes:
 
         results = state.get("verification_results", [])
         score = compute_accuracy_score(results)
-        report = render_report(state, results, score)
-        saved = await self._call("save_video_analysis", {"payload_json": json.dumps(build_save_payload(state, results, score))})
+        report = build_report(state, results, score)
+        markdown = render_markdown(report)
+        saved = await self._call(
+            "save_video_analysis", {"payload_json": json.dumps(build_save_payload(state, results, score, report))}
+        )
         ok = isinstance(saved, dict) and saved.get("status") == "success"
         if not ok:
             message = saved.get("message", "unknown error") if isinstance(saved, dict) else str(saved)
-            report += f"\n> ⚠️ This analysis could not be saved to channel history: {message}\n"
-        return {"final_report_md": report, "overall_accuracy_score": score, "saved_to_memory": ok, "verification_results": results}
+            markdown += f"\n> ⚠️ This analysis could not be saved to channel history: {message}\n"
+        return {
+            "report": report, "final_report_md": markdown, "overall_accuracy_score": score,
+            "saved_to_memory": ok, "verification_results": results,
+        }

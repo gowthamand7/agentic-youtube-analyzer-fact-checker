@@ -157,3 +157,48 @@ summary.trace-head::-webkit-details-marker { display: none; }
 .secondary { background: none; border: 1px solid var(--accent); color: var(--accent); border-radius: .5rem; padding: .35rem .9rem; font-weight: 600; }
 .secondary:hover { background: var(--accent-solid); color: var(--on-accent); }
 .secondary:disabled { opacity: .5; cursor: progress; }
+
+/* Report v2 */
+.header-actions { display: flex; gap: .5rem; align-items: center; flex: none; }
+.count { display: inline-block; min-width: 1.3rem; padding: 0 .4rem; border-radius: 999px; background: var(--none-bg); color: var(--text); font-size: .75rem; font-weight: 700; text-align: center; }
+.knowledge-panel { margin: 0 0 1.25rem; padding: 1rem 1.1rem; border: 1px solid var(--border); border-radius: .7rem; background: var(--surface); }
+.knowledge-panel[hidden] { display: none; }
+.knowledge-head { display: flex; justify-content: space-between; align-items: center; }
+.knowledge-head h2 { margin: 0; font-size: 1.1rem; }
+.knowledge-list { list-style: none; margin: .75rem 0 0; padding: 0; display: grid; gap: .5rem; max-height: 22rem; overflow: auto; }
+.knowledge-item { display: flex; gap: .75rem; justify-content: space-between; align-items: flex-start; padding: .55rem .75rem; border: 1px solid var(--border); border-radius: .5rem; background: var(--bg); }
+.knowledge-main { min-width: 0; overflow-wrap: anywhere; }
+
+.report.v2 .r-head h2 { font-size: 1.4rem; margin: 0 0 .5rem; }
+.report.v2 .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .6rem; }
+.chip.good { background: var(--good-bg); color: var(--good); } .chip.bad { background: var(--bad-bg); color: var(--bad); }
+.chip.key { background: var(--none-bg); color: var(--accent); font-size: .7rem; }
+.tldr { font-size: 1.05rem; margin: .4rem 0; }
+.title-check { margin: .3rem 0 0; }
+.r-sec { margin: 1.6rem 0; }
+.r-sec h3 { font-size: 1.15rem; margin: 0 0 .6rem; display: flex; align-items: center; gap: .6rem; }
+.learn { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.item { display: flex; gap: .75rem; justify-content: space-between; align-items: flex-start; padding: .6rem .85rem; border: 1px solid var(--border); border-radius: .6rem; background: var(--surface); }
+.item-main { min-width: 0; overflow-wrap: anywhere; }
+.item .ts { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: .3rem; }
+.item.known { opacity: .75; }
+.item.marked { background: var(--none-bg); justify-content: flex-start; }
+.marked-note { color: var(--muted); font-size: .9rem; }
+.known-note { color: var(--muted); font-size: .8rem; margin-left: auto; padding-right: .5rem; align-self: center; }
+.know-btn { flex: none; background: none; border: 1px solid var(--border); border-radius: .5rem; padding: .25rem .65rem; color: var(--muted); font-size: .8rem; white-space: nowrap; }
+.know-btn:hover { color: var(--accent); border-color: var(--accent); }
+.know-btn:disabled { opacity: .5; cursor: progress; }
+.know-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.known-group { margin-top: .75rem; }
+.known-group > summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+.known-group > .learn, .known-group > .claim { margin-top: .5rem; }
+.empty { color: var(--muted); font-style: italic; margin: .25rem 0; }
+.r-sec.fold { border: 1px solid var(--border); border-radius: .6rem; padding: .6rem 1rem; background: var(--surface); }
+.r-sec.fold > summary { cursor: pointer; font-weight: 600; }
+.r-sec.fold .claims { margin-top: .75rem; }
+.extra { margin: 0; padding-left: 1.4rem; display: grid; gap: .35rem; }
+.extra-callout { list-style: none; padding: .6rem .9rem; border-left: 3px solid var(--warn); background: var(--warn-bg); border-radius: .4rem; }
+.report.v2 .verdict { margin-left: .25rem; }
+.live-points { margin: .5rem 0 0; padding-left: 1.2rem; display: grid; gap: .2rem; font-size: .9rem; color: var(--muted); }
+.live-h { font-size: 1rem; margin: 1rem 0 0; }
+@media (max-width: 30rem) { .item { flex-direction: column; } .known-note { margin-left: 0; } }

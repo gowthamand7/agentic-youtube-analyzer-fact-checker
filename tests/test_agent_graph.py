@@ -12,13 +12,18 @@ from agent.graph import build_graph, stream_graph
 from agent.nodes import parse_tool_result
 from agent.report import compute_accuracy_score, enforce_evidence, timestamp_to_seconds
 from agent.schemas import (
+    Claim,
     ClaimVerdict,
     ClickbaitBuster,
-    Claim,
+    CommentInsight,
+    CommentsAnalysis,
     CriticOutput,
-    ExtractionOutput,
+    ExtraItem,
+    ExtraSection,
+    KeyPoint,
     SponsorMention,
     VerificationOutput,
+    VideoAnalysis,
     WeakClaim,
 )
 
@@ -63,15 +68,24 @@ def make_tools(calls: List, overrides: Dict[str, Any] | None = None) -> Dict[str
     return {n: FakeTool(n, r, calls) for n, r in results.items()}
 
 
-EXTRACTION = ExtractionOutput(
+ANALYSIS = VideoAnalysis(
+    video_type="tutorial",
+    tldr="Library X is faster than Y, but nowhere near 4x.",
+    key_points=[
+        KeyPoint(timestamp="02:00", point="Library X caches parsed results between calls.", concept="X result caching", importance="medium"),
+        KeyPoint(timestamp="04:32", point="Library X is 4x faster than Y.", concept="X vs Y speed", importance="high", claim_index=0),
+    ],
     clickbait=ClickbaitBuster(verdict="Only about 1.4x.", payoff_timestamp="08:14", clickbait_rating="Medium"),
-    claims=[Claim(timestamp="04:32", claim="Library X is 4x faster than Y.", quantitative=False)],
+    claims=[Claim(timestamp="04:32", claim="Library X is 4x faster than Y.", importance="high", quantitative=False)],
     sponsors=[SponsorMention(name="NordVPN", timestamp_range="02:10 - 03:45", disclosed=False)],
     has_paid_promotion=True,
     disclosed_properly=False,
     bias_notes="Praises X without noting affiliate link.",
     topic_tags=["python"],
-    domain="Tech Tutorial",
+    extra_sections=[ExtraSection(title="Steps to follow", kind="steps", items=[ExtraItem(label="1", text="pip install x")])],
+)
+COMMENTS = CommentsAnalysis(
+    insights=[CommentInsight(category="Tutorial Fix", author="@dev", likes=5, concept="legacy peer deps flag", detail="Use --legacy-peer-deps on Node 22.", adds_information=True)]
 )
 
 
@@ -118,7 +132,7 @@ async def run(graph, url="https://youtu.be/dQw4w9WgXcQ"):
 async def test_happy_path_scores_and_commits():
     calls: List = []
     llm = FakeLLM(
-        {ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
+        {VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
         tool_turns=[
             AIMessage(content="", tool_calls=[{"name": "search_web_factcheck", "args": {"query": "x"}, "id": "1"}]),
             AIMessage(content="done"),
@@ -128,8 +142,10 @@ async def test_happy_path_scores_and_commits():
 
     assert state["overall_accuracy_score"] == 35
     assert state["saved_to_memory"] is True
-    assert "Fact-Check Scorecard (Overall Accuracy: 35/100)" in state["final_report_md"]
-    assert "Recurring sponsor" in state["final_report_md"]
+    md = state["final_report_md"]
+    assert "## What you'll learn" in md and "## What's wrong or doubtful" in md and "## From the comments" in md
+    assert "Library X is 4x faster than Y." in md and "NordVPN" in md and "Steps to follow" in md
+    assert state["report"]["reliability"]["contradicted"] == 1
     saved = json.loads(next(a for n, a in calls if n == "save_video_analysis")["payload_json"])
     assert saved["channel_id"] == "UC1" and saved["overall_accuracy_score"] == 35
     assert saved["sponsors"] == ["NordVPN"] and saved["analysis_payload"]["claims_verified"][0]["verdict"] == "Partially False"
@@ -162,7 +178,8 @@ async def test_critic_retries_at_most_twice_then_reports_best_effort():
     weak = verdict("Unverified", sources=(), conf="low")
     llm = FakeLLM(
         {
-            ExtractionOutput: [EXTRACTION],
+            VideoAnalysis: [ANALYSIS],
+            CommentsAnalysis: [COMMENTS],
             VerificationOutput: [VerificationOutput(results=[weak])],
             CriticOutput: [CriticOutput(weak_claims=[WeakClaim(claim=weak.claim, suggested_query="library x benchmark official")])],
         },
@@ -186,7 +203,8 @@ async def test_critic_retries_at_most_twice_then_reports_best_effort():
 async def test_verdict_without_sources_is_downgraded_to_unverified():
     llm = FakeLLM(
         {
-            ExtractionOutput: [EXTRACTION],
+            VideoAnalysis: [ANALYSIS],
+            CommentsAnalysis: [COMMENTS],
             VerificationOutput: [VerificationOutput(results=[verdict("Debunked", sources=())])],
             CriticOutput: [CriticOutput(weak_claims=[])],
         }
@@ -198,7 +216,7 @@ async def test_verdict_without_sources_is_downgraded_to_unverified():
 
 async def test_skipped_claim_still_gets_unverified_result():
     llm = FakeLLM(
-        {ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[])], CriticOutput: [CriticOutput(weak_claims=[])]}
+        {VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[])], CriticOutput: [CriticOutput(weak_claims=[])]}
     )
     _, state = await run(build_graph(make_tools([]), llm))
     assert [r["verdict"] for r in state["verification_results"]] == ["Unverified"]
@@ -211,7 +229,7 @@ async def test_tool_failure_degrades_instead_of_crashing():
         {"search_web_factcheck": RuntimeError("tavily down"), "save_video_analysis": RuntimeError("clickhouse down"), "get_channel_history": RuntimeError("db down")},
     )
     llm = FakeLLM(
-        {ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
+        {VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
         tool_turns=[AIMessage(content="", tool_calls=[{"name": "search_web_factcheck", "args": {"query": "q"}, "id": "1"}]), AIMessage(content="done")],
     )
     _, state = await run(build_graph(tools, llm))
@@ -230,7 +248,7 @@ def test_scoring_and_helpers():
 
 async def test_stream_emits_human_readable_progress_events():
     llm = FakeLLM(
-        {ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
+        {VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
         tool_turns=[
             AIMessage(content="Checking the official benchmarks first.", tool_calls=[{"name": "search_web_factcheck", "args": {"query": "x faster"}, "id": "1"}]),
             AIMessage(content="done"),
@@ -239,8 +257,8 @@ async def test_stream_emits_human_readable_progress_events():
     events, _ = await run(build_graph(make_tools([]), llm))
     kinds = [e["type"] for e in events]
 
-    assert {"video", "overview", "claims", "verdict", "note"} <= set(kinds)
-    assert kinds.index("overview") < kinds.index("claims") < kinds.index("verdict")
+    assert {"video", "summary", "overview", "claims", "comments", "verdict", "note"} <= set(kinds)
+    assert kinds.index("summary") < kinds.index("claims") < kinds.index("verdict")
     search = next(e for e in events if e["type"] == "tool_start" and e["tool"] == "search_web_factcheck")
     assert search["title"] == "Searching the web" and search["detail"] == "x faster"
     end = next(e for e in events if e["type"] == "tool_end" and e["id"] == search["id"])
@@ -271,7 +289,7 @@ async def test_each_run_writes_a_debug_log_with_tool_details(tmp_path, monkeypat
     monkeypatch.setenv("LOG_DIR", str(tmp_path))
     calls: List = []
     llm = FakeLLM(
-        {ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
+        {VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
         tool_turns=[
             AIMessage(content="", tool_calls=[{"name": "search_web_factcheck", "args": {"query": "x faster"}, "id": "1"}]),
             AIMessage(content="done"),
@@ -289,7 +307,7 @@ async def test_each_run_writes_a_debug_log_with_tool_details(tmp_path, monkeypat
 
     tool = next(r for r in records if r["event"] == "tool_call" and r["tool"] == "search_web_factcheck")
     assert tool["args"] == {"query": "x faster"} and tool["ok"] is True and tool["duration_ms"] >= 0 and "docs.x/bench" in tool["result"]
-    llm_call = next(r for r in records if r["event"] == "llm_call" and "transcript" in r["purpose"])
+    llm_call = next(r for r in records if r["event"] == "llm_call" and "Summarizing" in r["purpose"])
     assert llm_call["prompt_chars"] > 0 and "clickbait" in llm_call["output"]
     assert llm_call["prompt"] is None  # full prompts only with LOG_PROMPTS=1
     assert any(r["event"] == "verdict" and r["verdict"] == "Partially False" for r in records)
@@ -300,7 +318,7 @@ async def test_each_run_writes_a_debug_log_with_tool_details(tmp_path, monkeypat
 async def test_failed_tool_is_logged_with_traceback(tmp_path, monkeypatch):
     monkeypatch.setenv("LOG_DIR", str(tmp_path))
     tools = make_tools([], {"get_channel_history": RuntimeError("db down")})
-    llm = FakeLLM({ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    llm = FakeLLM({VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
     await run(build_graph(tools, llm))
     records = _read_log(next(tmp_path.glob("*.jsonl")))
     failed = next(r for r in records if r["event"] == "tool_call" and r["tool"] == "get_channel_history")
@@ -309,7 +327,7 @@ async def test_failed_tool_is_logged_with_traceback(tmp_path, monkeypatch):
 
 async def test_unhandled_error_is_logged_and_reraised(tmp_path, monkeypatch):
     monkeypatch.setenv("LOG_DIR", str(tmp_path))
-    llm = FakeLLM({ExtractionOutput: [RuntimeError("anthropic 500")]})
+    llm = FakeLLM({VideoAnalysis: [RuntimeError("anthropic 500")]})
     with pytest.raises(Exception, match="anthropic 500"):
         await run(build_graph(make_tools([]), llm))
     records = _read_log(next(tmp_path.glob("*.jsonl")))
@@ -327,7 +345,7 @@ def test_plain_text_tool_failure_is_not_reported_as_success():
 async def test_unparseable_history_is_ignored_and_logged_as_failed(tmp_path, monkeypatch):
     monkeypatch.setenv("LOG_DIR", str(tmp_path))
     tools = make_tools([], {"get_channel_history": "database error: boom"})
-    llm = FakeLLM({ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    llm = FakeLLM({VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
     _, state = await run(build_graph(tools, llm))
     assert state["channel_history"] == {}
     failed = next(r for r in _read_log(next(tmp_path.glob("*.jsonl"))) if r["event"] == "tool_call" and r["tool"] == "get_channel_history")
@@ -343,7 +361,7 @@ def test_narration_marks_cached_results():
 
 async def test_trace_events_stream_tool_calls_with_parameter_names_before_they_finish():
     llm = FakeLLM(
-        {ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
+        {VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
         tool_turns=[
             AIMessage(content="Checking docs.", tool_calls=[{"name": "search_web_factcheck", "args": {"query": "x faster", "search_depth": "basic"}, "id": "1"}]),
             AIMessage(content="done"),
@@ -368,7 +386,7 @@ async def test_successful_run_stores_report_and_aborted_run_does_not(tmp_path, m
     from agent.report_store import load_report
 
     monkeypatch.setenv("REPORT_DIR", str(tmp_path / "reports"))
-    llm = FakeLLM({ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    llm = FakeLLM({VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
     await run(build_graph(make_tools([]), llm))
     stored = load_report("dQw4w9WgXcQ")
     assert stored["state"]["overall_accuracy_score"] == 35 and stored["video"]["title"] == META["title"]
@@ -398,3 +416,132 @@ def test_report_store_roundtrip_validation_and_url_parsing(tmp_path, monkeypatch
     for url in ["https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5s", "https://youtu.be/dQw4w9WgXcQ?si=x", "https://www.youtube.com/shorts/dQw4w9WgXcQ"]:
         assert video_id_from_url(url) == "dQw4w9WgXcQ"
     assert video_id_from_url("https://evil.example/watch?v=dQw4w9WgXcQ") is None and video_id_from_url("junk") is None
+
+
+async def test_low_importance_weak_claims_do_not_trigger_retries():
+    low = ANALYSIS.model_copy(update={"claims": [Claim(timestamp="04:32", claim="Library X is 4x faster than Y.", importance="low", quantitative=False)]})
+    weak = verdict("Unverified", sources=(), conf="low")
+    llm = FakeLLM({VideoAnalysis: [low], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[weak])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    _, state = await run(build_graph(make_tools([]), llm))
+    assert state["retry_count"] == 0 and [c for c in llm.structured_calls if c is VerificationOutput] == [VerificationOutput]
+    assert state["verification_results"][0]["importance"] == "low"
+
+
+async def test_summary_and_comment_analysis_run_and_comment_failure_is_tolerated():
+    llm = FakeLLM(
+        {
+            VideoAnalysis: [ANALYSIS],
+            CommentsAnalysis: [RuntimeError("comments model down")],
+            VerificationOutput: [VerificationOutput(results=[verdict()])],
+            CriticOutput: [CriticOutput(weak_claims=[])],
+        }
+    )
+    events, state = await run(build_graph(make_tools([]), llm))
+    assert VideoAnalysis in llm.structured_calls and CommentsAnalysis in llm.structured_calls
+    assert state["comment_insights"] == [] and state["report"]["comments"] == []
+    assert state["report"]["summary"]["tldr"] and state["overall_accuracy_score"] == 35
+    assert not any(e["type"] == "comments" for e in events)
+
+
+async def test_report_carries_structure_comments_and_importance():
+    llm = FakeLLM({VideoAnalysis: [ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    events, state = await run(build_graph(make_tools([]), llm))
+    report = state["report"]
+    assert report["version"] == 2 and report["video_type"] == "tutorial"
+    assert report["summary"]["key_points"][1]["check"]["verdict"] == "Partially False"
+    assert report["comments"][0]["author"] == "@dev" and report["extras"][0]["kind"] == "steps"
+    summary_event = next(e for e in events if e["type"] == "summary")
+    assert summary_event["tldr"] == ANALYSIS.tldr and len(summary_event["key_points"]) == 2
+
+
+class FlakyOnce:
+    """Raises a pydantic ValidationError on the first structured call, then returns the real object."""
+
+    def __init__(self, good):
+        self.good, self.calls = good, 0
+
+
+async def test_structured_output_that_misses_a_field_is_retried_with_the_error(tmp_path, monkeypatch):
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    try:
+        VideoAnalysis.model_validate({"video_type": "tutorial"})
+    except ValidationError as err:
+        validation_error = err
+    llm = FakeLLM({VideoAnalysis: [validation_error, ANALYSIS], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    sent = []
+    original = llm.with_structured_output
+
+    def spy(schema):
+        inner = original(schema)
+
+        class _S:
+            async def ainvoke(self, messages):
+                sent.append((schema.__name__, len(messages)))
+                return await inner.ainvoke(messages)
+
+        return _S()
+
+    llm.with_structured_output = spy
+    _, state = await run(build_graph(make_tools([]), llm))
+    analysis_calls = [n for name, n in sent if name == "VideoAnalysis"]
+    assert len(analysis_calls) == 2 and analysis_calls[1] == analysis_calls[0] + 1  # second call carries the error message
+    assert state["report"]["summary"]["tldr"] and "structured_retry" in [r["event"] for r in _read_log(next(tmp_path.glob("*.jsonl")))]
+
+
+async def test_missing_topic_tags_fall_back_to_key_idea_concepts():
+    no_tags = ANALYSIS.model_copy(update={"topic_tags": []})
+    llm = FakeLLM({VideoAnalysis: [no_tags], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    _, state = await run(build_graph(make_tools([]), llm))
+    assert state["report"]["topic_tags"] == ["x result caching", "x vs y speed"]
+
+
+def test_drop_empty_sections_removes_absence_filler():
+    from agent.nodes import ABSENCE, drop_empty_sections
+
+    sections = [
+        {"title": "Numbers to know", "kind": "list", "items": [{"label": "", "text": "The video contains no numerical statistics or benchmarks."}]},
+        {"title": "Steps", "kind": "steps", "items": [{"label": "1", "text": "Install it."}, {"label": "", "text": "None."}, {"label": "", "text": "  "}]},
+        {"title": "Empty", "kind": "list", "items": []},
+    ]
+    assert drop_empty_sections(sections) == [{"title": "Steps", "kind": "steps", "items": [{"label": "1", "text": "Install it."}]}]
+    for filler in ["No affiliate links, promo codes or sponsors are present.", "None", "This video has no sponsors", "Nothing notable"]:
+        assert ABSENCE.match(filler)
+    assert not ABSENCE.match("Notable bias: the host praises the product he sells.")
+    assert not ABSENCE.match("Nobody asked, but...")  # only whole words count
+
+
+async def test_filler_bias_note_and_sections_never_reach_the_report():
+    filler = ANALYSIS.model_copy(update={
+        "bias_notes": "No affiliate links, promo codes or sponsors are present.",
+        "extra_sections": [ExtraSection(title="Numbers to know", kind="list", items=[ExtraItem(text="No numbers appear in this video.")])],
+    })
+    llm = FakeLLM({VideoAnalysis: [filler], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    _, state = await run(build_graph(make_tools([]), llm))
+    assert state["report"]["extras"] == [] and state["report"]["before_you_watch"]["bias_notes"] == ""
+    assert "Numbers to know" not in state["final_report_md"]
+
+
+async def test_comments_that_add_no_information_are_dropped():
+    comments = CommentsAnalysis(insights=[
+        CommentInsight(category="Extra Context", author="@a", likes=52, concept="course request", detail="Wants a full course.", adds_information=False),
+        CommentInsight(category="Correction", author="@b", likes=3, concept="real fix", detail="Use flag --x.", adds_information=True),
+    ])
+    llm = FakeLLM({VideoAnalysis: [ANALYSIS], CommentsAnalysis: [comments], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    events, state = await run(build_graph(make_tools([]), llm))
+    assert [c["author"] for c in state["report"]["comments"]] == ["@b"]
+    assert [i["author"] for i in next(e for e in events if e["type"] == "comments")["insights"]] == ["@b"]
+
+
+async def test_key_points_are_shown_in_video_order():
+    shuffled = ANALYSIS.model_copy(update={"key_points": [
+        KeyPoint(timestamp="10:00", point="Late point.", concept="late", importance="low"),
+        KeyPoint(timestamp="01:30", point="Early point.", concept="early", importance="low"),
+        KeyPoint(timestamp="1:05:00", point="Very late point.", concept="very late", importance="low"),
+        KeyPoint(timestamp="??", point="Unparseable time.", concept="odd", importance="low"),
+        KeyPoint(timestamp="00:00", point="Opening point.", concept="opening", importance="low"),
+    ]})
+    llm = FakeLLM({VideoAnalysis: [shuffled], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
+    _, state = await run(build_graph(make_tools([]), llm))
+    assert [k["point"] for k in state["report"]["summary"]["key_points"]] == ["Opening point.", "Early point.", "Late point.", "Very late point.", "Unparseable time."]

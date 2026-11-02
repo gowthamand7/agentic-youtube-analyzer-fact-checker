@@ -14,11 +14,13 @@ class AgentState(TypedDict, total=False):
     channel_history: Dict[str, Any]
     transcript_summary: Dict[str, Any]
     extracted_claims: List[Dict[str, Any]]
-    community_insights: List[Dict[str, Any]]
+    comment_insights: List[Dict[str, Any]]  # new information found in viewer comments
+    community_insights: List[Dict[str, Any]]  # outside discussion (web/social), each with a real URL
     verification_results: List[Dict[str, Any]]
     critic_feedback: List[Dict[str, Any]]
     retry_count: int
     error_message: Optional[str]
     overall_accuracy_score: int
     saved_to_memory: bool
+    report: Dict[str, Any]  # structured report v2 (see agent/report.py)
     final_report_md: str

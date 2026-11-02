@@ -18,12 +18,24 @@
         <h1>Agentic YouTube Fact-Checker</h1>
         <p class="lede">
           Paste a video link. The agent audits its claims against web evidence and community discussion,
-          flags sponsorships, and tracks the channel's accuracy over time. Reports are saved, so a video you
-          already checked opens instantly; re-run it any time.
+          flags sponsorships, and shows only what is new to you: mark anything you already know and it is hidden
+          in every future video. Reports are saved, so a video you already checked opens instantly.
         </p>
       </div>
-      <button type="button" id="theme-toggle" class="icon-btn" aria-label="Toggle light/dark theme" title="Toggle theme">◐</button>
+      <div class="header-actions">
+        <button type="button" id="knowledge-btn" class="secondary">Your knowledge <span id="knowledge-count" class="count">0</span></button>
+        <button type="button" id="theme-toggle" class="icon-btn" aria-label="Toggle light/dark theme" title="Toggle theme">◐</button>
+      </div>
     </header>
+
+    <section id="knowledge-panel" class="knowledge-panel" hidden>
+      <div class="knowledge-head">
+        <h2>What you already know</h2>
+        <button type="button" id="knowledge-close" class="tab-action">Close</button>
+      </div>
+      <p class="meta">Items you marked "I already know this". They are hidden from new reports. Remove one to see it again.</p>
+      <ul id="knowledge-list" class="knowledge-list"></ul>
+    </section>
 
     <form id="analyze-form">
       <label for="video_url" class="sr-only">YouTube URL</label>
@@ -54,8 +66,10 @@
 
       <section id="findings" class="findings" hidden>
         <h2>Findings so far</h2>
+        <div id="summary-live"></div>
         <div id="overview"></div>
         <div id="claims-live" class="claims"></div>
+        <div id="comments-live"></div>
       </section>
 
       <div id="error" class="error" role="alert" hidden></div>
@@ -98,8 +112,10 @@
         steps = {}; claimEls = {}; currentGroup = null; stepCount = 0; userScrolled = false; traceLines = [];
         $("timeline").textContent = "";
         $("trace").textContent = "";
+        $("summary-live").textContent = "";
         $("overview").textContent = "";
         $("claims-live").textContent = "";
+        $("comments-live").textContent = "";
         $("report").textContent = "";
         $("activity-meta").textContent = "";
         delete $("activity-meta").dataset.rid;
@@ -318,6 +334,32 @@
         card.appendChild(el("div", "claim-meta", "at " + r.timestamp + " · confidence: " + r.confidence));
       }
 
+      function onSummary(e) {
+        showFindings();
+        var box = $("summary-live");
+        box.textContent = "";
+        var card = el("div", "overview-card");
+        var head = el("div", "overview-head");
+        head.appendChild(el("span", "chip", e.video_type));
+        head.appendChild(el("span", "chip muted", e.key_points.length + " key ideas"));
+        card.appendChild(head);
+        card.appendChild(el("p", "overview-verdict", e.tldr));
+        var list = el("ul", "live-points");
+        e.key_points.forEach(function (kp) { list.appendChild(el("li", null, "[" + kp.timestamp + "] " + kp.point)); });
+        card.appendChild(list);
+        box.appendChild(card);
+      }
+
+      function onComments(e) {
+        showFindings();
+        var box = $("comments-live");
+        box.textContent = "";
+        box.appendChild(el("h3", "live-h", "New information from the comments"));
+        var list = el("ul", "live-points");
+        e.insights.forEach(function (c) { list.appendChild(el("li", null, c.category + ": " + c.detail + " (" + c.author + ")")); });
+        box.appendChild(list);
+      }
+
       function onRequest(e) {
         $("activity").querySelector(".activity-title").title = "Debug log: logs/" + e.log_file;
         $("activity-meta").dataset.rid = e.id;
@@ -325,7 +367,8 @@
 
       var HANDLERS = {
         request: onRequest, node_start: onNodeStart, tool_start: onToolStart, tool_end: onToolEnd, note: onNote,
-        video: onVideo, overview: onOverview, claims: onClaims, verdict: onVerdict, trace: onTrace
+        video: onVideo, overview: onOverview, claims: onClaims, verdict: onVerdict, trace: onTrace,
+        summary: onSummary, comments: onComments
       };
 
       /* ---------- Saved report banner ---------- */
@@ -410,6 +453,98 @@
         if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
         else done(false);
       });
+
+      /* ---------- "I already know this" ---------- */
+      function api(method, path, body) {
+        return fetch(path, {
+          method: method,
+          headers: body ? { "Content-Type": "application/json" } : undefined,
+          body: body ? JSON.stringify(body) : undefined
+        }).then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        });
+      }
+
+      function refreshKnowledgeCount() {
+        return api("GET", "/api/knowledge").then(function (d) {
+          $("knowledge-count").textContent = d.entries.length;
+          return d.entries;
+        }).catch(function () { return []; });
+      }
+
+      function replaceWithNote(li, text, undo) {
+        li.dataset.hidden = "1";
+        li.querySelectorAll(":scope > *").forEach(function (c) { c.hidden = true; });
+        var note = el("span", "marked-note", text + " ");
+        if (undo) note.appendChild(undo);
+        li.classList.add("marked");
+        li.appendChild(note);
+      }
+
+      function restore(li) {
+        var note = li.querySelector(":scope > .marked-note");
+        if (note) note.remove();
+        li.classList.remove("marked");
+        delete li.dataset.hidden;
+        li.querySelectorAll(":scope > *").forEach(function (c) { c.hidden = false; });
+      }
+
+      $("report").addEventListener("click", function (ev) {
+        var btn = ev.target.closest("button[data-action]");
+        if (!btn) return;
+        var li = btn.closest("li.item");
+        var videoId = $("report").querySelector("article").dataset.videoId;
+        btn.disabled = true;
+        if (btn.dataset.action === "know") {
+          api("POST", "/api/knowledge", { video_id: videoId, item_id: li.dataset.itemId }).then(function (entry) {
+            var undo = el("button", "know-btn undo", "Undo");
+            undo.type = "button";
+            undo.addEventListener("click", function () {
+              undo.disabled = true;
+              api("DELETE", "/api/knowledge/" + entry.id).then(function () { restore(li); btn.disabled = false; refreshKnowledgeCount(); })
+                .catch(function () { undo.disabled = false; });
+            });
+            replaceWithNote(li, "Got it. This is hidden from future reports.", undo);
+            refreshKnowledgeCount();
+          }).catch(function () { btn.disabled = false; btn.textContent = "Couldn't save, try again"; });
+        } else if (btn.dataset.action === "unknow") {
+          api("DELETE", "/api/knowledge/" + btn.dataset.entry).then(function () {
+            replaceWithNote(li, "Removed from what you know. It will show as new next time.", null);
+            refreshKnowledgeCount();
+          }).catch(function () { btn.disabled = false; });
+        }
+      });
+
+      function renderKnowledge(entries) {
+        var list = $("knowledge-list");
+        list.textContent = "";
+        if (!entries.length) { list.appendChild(el("li", "empty", "Nothing yet. Click \"I already know this\" on anything in a report.")); return; }
+        entries.slice().reverse().forEach(function (e) {
+          var li = el("li", "knowledge-item");
+          var main = el("div", "knowledge-main");
+          main.appendChild(el("strong", null, e.concept));
+          main.appendChild(el("div", "meta", e.text));
+          if (e.video_title) main.appendChild(el("div", "meta", "from: " + e.video_title));
+          li.appendChild(main);
+          var rm = el("button", "know-btn undo", "Remove");
+          rm.type = "button";
+          rm.addEventListener("click", function () {
+            rm.disabled = true;
+            api("DELETE", "/api/knowledge/" + e.id).then(function () { li.remove(); refreshKnowledgeCount(); }).catch(function () { rm.disabled = false; });
+          });
+          li.appendChild(rm);
+          list.appendChild(li);
+        });
+      }
+
+      $("knowledge-btn").addEventListener("click", function () {
+        var panel = $("knowledge-panel");
+        panel.hidden = !panel.hidden;
+        if (!panel.hidden) refreshKnowledgeCount().then(renderKnowledge);
+      });
+      $("knowledge-close").addEventListener("click", function () { $("knowledge-panel").hidden = true; });
+      refreshKnowledgeCount();
 
       window.addEventListener("wheel", function (e) { if (e.deltaY < 0) userScrolled = true; }, { passive: true });
 

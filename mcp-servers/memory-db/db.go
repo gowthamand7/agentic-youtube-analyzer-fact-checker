@@ -366,7 +366,7 @@ func (db *ClickHouseDB) QueryHistoricalClaims(ctx context.Context, topicTag stri
 		video_id,
 		video_title,
 		topic_tags,
-		analysis_payload,
+		toString(analysis_payload) AS analysis_payload, -- JSON column (init_schema.sql) cannot be scanned into a Go string directly
 		analyzed_at
 	FROM %s.video_analyses FINAL
 	WHERE has(topic_tags, ?) OR arrayExists(x -> lower(x) = lower(?), topic_tags)

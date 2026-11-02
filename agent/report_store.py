@@ -18,6 +18,7 @@ _HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"
 # State keys needed to re-render a report exactly as it was first shown.
 STORED_KEYS = (
     "video_id", "final_report_md", "overall_accuracy_score", "saved_to_memory", "verification_results", "community_insights",
+    "report",
 )
 
 
