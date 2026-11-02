@@ -15,6 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from markdown_it import MarkdownIt
 from pydantic import BaseModel
 
+from agent.report import timestamp_to_seconds
+
 log = logging.getLogger("app")
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -81,12 +83,58 @@ def progress_html(event: Dict[str, Any]) -> str | None:
     return None
 
 
+_TABLE_RE = re.compile(r"(?m)^\| Timestamp.*(?:\n\|.*)*")
+_CLAIMS_MARK = "[[CLAIMS]]"
+_VERDICT_CLASS = {
+    "Verified": "good", "Mostly True": "good", "Exaggerated": "warn",
+    "Partially False": "warn", "Debunked": "bad", "Unverified": "none",
+}
+
+
+def _ts_link(video_id: str, ts: str) -> str:
+    secs = timestamp_to_seconds(ts)
+    if secs is None or not VIDEO_ID_RE.fullmatch(video_id):
+        return html.escape(ts or "")
+    return f'<a href="https://youtube.com/watch?v={video_id}&amp;t={secs}s" target="_blank" rel="noopener">{html.escape(ts)}</a>'
+
+
+def claims_accordion(state: Dict[str, Any]) -> str:
+    """One expandable <details> card per fact-checked claim."""
+    video_id = state.get("video_id", "")
+    cards = []
+    for r in state.get("verification_results", []):
+        cls = _VERDICT_CLASS.get(r.get("verdict", ""), "none")
+        sources = "".join(
+            f'<li><a href="{html.escape(u)}" target="_blank" rel="noopener noreferrer">{html.escape(u)}</a></li>'
+            for u in r.get("sources", [])
+            if u.startswith(("http://", "https://"))
+        )
+        cards.append(
+            f'<details class="claim claim-{cls}"><summary>'
+            f'<span class="verdict verdict-{cls}">{html.escape(r.get("verdict", ""))}</span>'
+            f'<span class="claim-text">{html.escape(r.get("claim", ""))}</span></summary>'
+            f'<div class="claim-body"><p class="meta">At {_ts_link(video_id, r.get("timestamp", ""))}'
+            f' · confidence: {html.escape(str(r.get("confidence", "n/a")))}</p>'
+            f'<p>{html.escape(r.get("evidence", ""))}</p>'
+            + (f'<ul class="sources">{sources}</ul>' if sources else "")
+            + "</div></details>"
+        )
+    return '<div class="claims">' + "".join(cards) + "</div>" if cards else ""
+
+
 def report_html(state: Dict[str, Any]) -> str:
     score = state.get("overall_accuracy_score")
     head = ""
     if score is not None and not state.get("error_message"):
         head = f'<p class="score">Overall accuracy <strong>{int(score)}/100</strong></p>'
-    return head + f'<article class="report">{_md.render(state.get("final_report_md", ""))}</article>'
+    md = state.get("final_report_md", "")
+    accordion = claims_accordion(state)
+    if accordion:
+        md = _TABLE_RE.sub(_CLAIMS_MARK, md, count=1)
+    body = _md.render(md)
+    if accordion:
+        body = body.replace(f"<p>{_CLAIMS_MARK}</p>", accordion)
+    return head + f'<article class="report">{body}</article>'
 
 
 async def stream_events(runner: Runner, video_url: str) -> AsyncGenerator[str, None]:

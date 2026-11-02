@@ -4,34 +4,46 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>YouTube Fact-Checker</title>
-  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230284c7'/%3E%3Cpath d='M8 17l5 5 11-12' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <script>
+    // Apply the saved theme before first paint to avoid a flash; storage may be unavailable.
+    try { var t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/static/styles.css">
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
-  <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen">
-  <main class="mx-auto max-w-4xl px-4 py-10">
-    <header class="mb-8">
-      <h1 class="text-3xl font-bold tracking-tight">Agentic YouTube Fact-Checker</h1>
-      <p class="mt-2 text-slate-400">
-        Paste a video link. The agent audits its claims against web evidence and community discussion,
-        flags sponsorships, and tracks the channel's accuracy over time.
-      </p>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Agentic YouTube Fact-Checker</h1>
+        <p class="lede">
+          Paste a video link. The agent audits its claims against web evidence and community discussion,
+          flags sponsorships, and tracks the channel's accuracy over time.
+        </p>
+      </div>
+      <button type="button" id="theme-toggle" class="icon-btn" aria-label="Toggle light/dark theme" title="Toggle theme">◐</button>
     </header>
 
-    <form hx-get="/ui/panel" hx-target="#result" hx-swap="innerHTML" hx-disabled-elt="find button"
-          class="flex flex-col gap-3 sm:flex-row">
+    <form hx-get="/ui/panel" hx-target="#result" hx-swap="innerHTML" hx-disabled-elt="find button">
       <label for="video_url" class="sr-only">YouTube URL</label>
       <input id="video_url" name="video_url" type="url" required maxlength="300"
-             placeholder="https://www.youtube.com/watch?v=..."
-             class="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-4 py-3 text-slate-100 placeholder-slate-500 focus:border-sky-500 focus:outline-none">
-      <button type="submit"
-              class="rounded-lg bg-sky-600 px-6 py-3 font-semibold hover:bg-sky-500 disabled:opacity-50">
-        Analyze
-      </button>
+             placeholder="https://www.youtube.com/watch?v=...">
+      <button type="submit" class="primary">Analyze</button>
     </form>
 
-    <section id="result" class="mt-8" aria-live="polite"></section>
+    <section id="result" aria-live="polite"></section>
   </main>
+
+  <script>
+    document.getElementById("theme-toggle").addEventListener("click", function () {
+      var root = document.documentElement;
+      var current = root.dataset.theme || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+      var next = current === "light" ? "dark" : "light";
+      root.dataset.theme = next;
+      try { localStorage.setItem("theme", next); } catch (e) {}
+    });
+  </script>
 </body>
 </html>

@@ -118,3 +118,41 @@ def test_ui_panel_embeds_sse_connection(client):
 def test_index_served(client):
     r = client.get("/")
     assert r.status_code == 200 and "htmx" in r.text.lower()
+
+
+def test_report_renders_claims_as_accordion_and_escapes():
+    from app.main import report_html
+
+    md = "\n".join(
+        [
+            "# R",
+            "",
+            "## Scorecard",
+            "| Timestamp | Host's Claim | Verdict | Verification & Evidence |",
+            "| :--- | :--- | :--- | :--- |",
+            "| 1 | c | v | e |",
+            "",
+            "## Next",
+            "",
+        ]
+    )
+    state = {
+        "video_id": "dQw4w9WgXcQ",
+        "final_report_md": md,
+        "overall_accuracy_score": 40,
+        "verification_results": [
+            {
+                "timestamp": "04:32",
+                "claim": "<b>4x faster</b>",
+                "verdict": "Partially False",
+                "evidence": "1.4x <img src=x onerror=1>",
+                "sources": ["https://a.example/p?x=1&y=2", "javascript:alert(1)"],
+                "confidence": "high",
+            }
+        ],
+    }
+    out = report_html(state)
+    assert out.count("<details") == 1 and "<table>" not in out and "[[CLAIMS]]" not in out
+    assert "&lt;b&gt;4x faster&lt;/b&gt;" in out and "<img" not in out
+    assert "t=272s" in out and "javascript:" not in out
+    assert "<h2>Next</h2>" in out
