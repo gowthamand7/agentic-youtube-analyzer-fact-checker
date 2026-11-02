@@ -10,8 +10,6 @@
     try { var t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
   </script>
   <link rel="stylesheet" href="/static/styles.css">
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-  <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
 </head>
 <body>
   <main>
@@ -20,30 +18,247 @@
         <h1>Agentic YouTube Fact-Checker</h1>
         <p class="lede">
           Paste a video link. The agent audits its claims against web evidence and community discussion,
-          flags sponsorships, and tracks the channel's accuracy over time.
+          flags sponsorships, and tracks the channel's accuracy over time. You can watch it work.
         </p>
       </div>
       <button type="button" id="theme-toggle" class="icon-btn" aria-label="Toggle light/dark theme" title="Toggle theme">◐</button>
     </header>
 
-    <form hx-get="/ui/panel" hx-target="#result" hx-swap="innerHTML" hx-disabled-elt="find button">
+    <form id="analyze-form">
       <label for="video_url" class="sr-only">YouTube URL</label>
       <input id="video_url" name="video_url" type="url" required maxlength="300"
              placeholder="https://www.youtube.com/watch?v=...">
-      <button type="submit" class="primary">Analyze</button>
+      <button type="submit" id="submit-btn" class="primary">Analyze</button>
     </form>
 
-    <section id="result" aria-live="polite"></section>
+    <section id="run" hidden>
+      <div id="video-card" class="video-card" hidden>
+        <div class="video-title"></div>
+        <div class="video-meta"></div>
+      </div>
+
+      <details id="activity" class="activity" open>
+        <summary>
+          <span class="activity-title">Agent activity</span>
+          <span id="activity-meta" class="activity-meta"></span>
+        </summary>
+        <ol id="timeline" class="timeline" aria-live="polite"></ol>
+      </details>
+
+      <section id="findings" class="findings" hidden>
+        <h2>Findings so far</h2>
+        <div id="overview"></div>
+        <div id="claims-live" class="claims"></div>
+      </section>
+
+      <div id="error" class="error" role="alert" hidden></div>
+      <div id="report" aria-live="polite"></div>
+    </section>
   </main>
 
   <script>
-    document.getElementById("theme-toggle").addEventListener("click", function () {
-      var root = document.documentElement;
-      var current = root.dataset.theme || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
-      var next = current === "light" ? "dark" : "light";
-      root.dataset.theme = next;
-      try { localStorage.setItem("theme", next); } catch (e) {}
-    });
+    (function () {
+      var NODE_LABELS = {
+        triage: "Getting to know the video",
+        extraction: "Reading the transcript & comments",
+        investigator: "Investigating the claims",
+        critic: "Double-checking weak spots",
+        report: "Scoring and writing the report"
+      };
+      var VERDICT_CLASS = {
+        "Verified": "good", "Mostly True": "good", "Exaggerated": "warn",
+        "Partially False": "warn", "Debunked": "bad", "Unverified": "none"
+      };
+      var $ = function (id) { return document.getElementById(id); };
+      var source = null, timer = null, startedAt = 0, stepCount = 0;
+      var steps = {}, claimEls = {}, currentGroup = null, userScrolled = false;
+
+      function el(tag, cls, text) {
+        var node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text !== undefined && text !== null) node.textContent = text;
+        return node;
+      }
+
+      function reset() {
+        if (source) source.close();
+        clearInterval(timer);
+        steps = {}; claimEls = {}; currentGroup = null; stepCount = 0; userScrolled = false;
+        $("timeline").textContent = "";
+        $("overview").textContent = "";
+        $("claims-live").textContent = "";
+        $("report").textContent = "";
+        $("error").hidden = true;
+        $("findings").hidden = true;
+        $("video-card").hidden = true;
+        $("activity").open = true;
+        $("run").hidden = false;
+      }
+
+      function tick() {
+        var secs = Math.round((Date.now() - startedAt) / 1000);
+        $("activity-meta").textContent = stepCount + " steps · " + secs + "s";
+      }
+
+      function follow() {
+        if (!userScrolled) window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      }
+
+      function addTimelineItem(item) {
+        (currentGroup || $("timeline")).appendChild(item);
+        follow();
+      }
+
+      function onNodeStart(e) {
+        var label = NODE_LABELS[e.node] || e.node;
+        if (e.node === "investigator" && e.attempt) label += " (retry " + e.attempt + ")";
+        var li = el("li", "group");
+        li.appendChild(el("div", "group-title", label));
+        currentGroup = el("ol", "group-steps");
+        li.appendChild(currentGroup);
+        $("timeline").appendChild(li);
+        follow();
+      }
+
+      function onToolStart(e) {
+        stepCount++;
+        var li = el("li", "step running" + (e.tool === "thinking" ? " thinking" : ""));
+        li.appendChild(el("span", "marker"));
+        var body = el("div", "step-body");
+        body.appendChild(el("div", "step-title", e.title || e.tool));
+        if (e.detail) body.appendChild(el("div", "step-detail", e.detail));
+        li.appendChild(body);
+        steps[e.id] = { li: li, body: body };
+        addTimelineItem(li);
+      }
+
+      function onToolEnd(e) {
+        var s = steps[e.id];
+        if (!s) return;
+        s.li.classList.remove("running");
+        s.li.classList.add(e.ok ? "ok" : "failed");
+        s.li.querySelector(".marker").textContent = e.ok ? "✓" : "!";
+        if (e.summary) s.body.appendChild(el("div", "step-result", e.summary));
+      }
+
+      function onNote(e) {
+        addTimelineItem(el("li", "note", e.text));
+      }
+
+      function onVideo(e) {
+        var card = $("video-card");
+        card.querySelector(".video-title").textContent = e.title;
+        card.querySelector(".video-meta").textContent = e.channel + (e.upload_date ? " · " + e.upload_date : "");
+        card.hidden = false;
+      }
+
+      function showFindings() { $("findings").hidden = false; }
+
+      function onOverview(e) {
+        showFindings();
+        var box = $("overview");
+        box.textContent = "";
+        var card = el("div", "overview-card");
+        var head = el("div", "overview-head");
+        head.appendChild(el("span", "chip", "Clickbait: " + e.clickbait.clickbait_rating));
+        if (e.domain) head.appendChild(el("span", "chip muted", e.domain));
+        if (e.has_paid_promotion) head.appendChild(el("span", "chip warn", "Paid promotion" + (e.sponsors.length ? ": " + e.sponsors.join(", ") : "")));
+        card.appendChild(head);
+        card.appendChild(el("p", "overview-verdict", e.clickbait.verdict));
+        if (e.clickbait.payoff_timestamp) card.appendChild(el("p", "meta", "The answer comes at " + e.clickbait.payoff_timestamp));
+        if (e.bias_notes) card.appendChild(el("p", "meta", "Bias note: " + e.bias_notes));
+        box.appendChild(card);
+      }
+
+      function claimCard(claim) {
+        var d = el("div", "claim claim-none pending");
+        var row = el("div", "claim-row");
+        row.appendChild(el("span", "verdict verdict-none", "Checking…"));
+        row.appendChild(el("span", "claim-text", claim.claim));
+        d.appendChild(row);
+        d.appendChild(el("div", "claim-meta", "at " + (claim.timestamp || "?")));
+        return d;
+      }
+
+      function onClaims(e) {
+        showFindings();
+        e.claims.forEach(function (c) {
+          var card = claimCard(c);
+          claimEls[c.claim] = card;
+          $("claims-live").appendChild(card);
+        });
+      }
+
+      function onVerdict(e) {
+        var r = e.result, card = claimEls[r.claim];
+        if (!card) { card = claimCard(r); claimEls[r.claim] = card; $("claims-live").appendChild(card); }
+        var cls = VERDICT_CLASS[r.verdict] || "none";
+        card.className = "claim claim-" + cls + " revealed";
+        card.textContent = "";
+        var row = el("div", "claim-row");
+        row.appendChild(el("span", "verdict verdict-" + cls, r.verdict));
+        row.appendChild(el("span", "claim-text", r.claim));
+        card.appendChild(row);
+        card.appendChild(el("p", "claim-evidence", r.evidence));
+        var meta = el("div", "claim-meta", "at " + r.timestamp + " · confidence: " + r.confidence);
+        card.appendChild(meta);
+      }
+
+      var HANDLERS = {
+        node_start: onNodeStart, tool_start: onToolStart, tool_end: onToolEnd, note: onNote,
+        video: onVideo, overview: onOverview, claims: onClaims, verdict: onVerdict
+      };
+
+      function finish() {
+        clearInterval(timer);
+        tick();
+        if (source) source.close();
+        source = null;
+        $("submit-btn").disabled = false;
+        document.querySelectorAll(".step.running").forEach(function (s) { s.classList.remove("running"); });
+      }
+
+      $("analyze-form").addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        var url = $("video_url").value.trim();
+        if (!url) return;
+        reset();
+        $("submit-btn").disabled = true;
+        startedAt = Date.now();
+        timer = setInterval(tick, 1000);
+        source = new EventSource("/api/analyze/stream?video_url=" + encodeURIComponent(url));
+
+        source.addEventListener("agent", function (m) {
+          var e = JSON.parse(m.data);
+          var h = HANDLERS[e.type];
+          if (h) h(e);
+        });
+        source.addEventListener("report", function (m) {
+          $("report").innerHTML = m.data; // server-sanitized HTML (raw HTML in model output is escaped)
+          $("findings").hidden = true;
+          $("activity").open = false;
+          $("report").scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        source.addEventListener("error", function (m) {
+          // A native connection error has no data; close at once so EventSource never auto-reconnects and re-runs the analysis.
+          if (!source) return;
+          $("error").textContent = m.data || "Connection to the server was lost before the analysis finished.";
+          $("error").hidden = false;
+          finish();
+        });
+        source.addEventListener("done", finish);
+      });
+
+      window.addEventListener("wheel", function (e) { if (e.deltaY < 0) userScrolled = true; }, { passive: true });
+
+      $("theme-toggle").addEventListener("click", function () {
+        var root = document.documentElement;
+        var current = root.dataset.theme || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        var next = current === "light" ? "dark" : "light";
+        root.dataset.theme = next;
+        try { localStorage.setItem("theme", next); } catch (e) {}
+      });
+    })();
   </script>
 </body>
 </html>

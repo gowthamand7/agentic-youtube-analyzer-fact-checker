@@ -1,16 +1,17 @@
-"""FastAPI backend: SSE streaming analysis endpoint, JSON endpoint, and HTMX UI fragments."""
+"""FastAPI backend: SSE streaming analysis endpoint, JSON endpoint, and the static UI."""
 
 from __future__ import annotations
 
 import html
+import json
 import logging
 import re
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from markdown_it import MarkdownIt
 from pydantic import BaseModel
@@ -23,12 +24,8 @@ STATIC_DIR = Path(__file__).parent / "static"
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
 VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
 
-NODE_LABELS = {
-    "triage": "Triage & channel history",
-    "extraction": "Reading transcript & comments",
-    "investigator": "Investigating claims",
-    "critic": "Self-review",
-    "report": "Scoring & building report",
+PROGRESS_EVENT_TYPES = {
+    "node_start", "node_end", "tool_start", "tool_end", "note", "video", "overview", "claims", "verdict",
 }
 
 Runner = Callable[[str], AsyncGenerator[Dict[str, Any], None]]
@@ -65,22 +62,6 @@ class AnalyzeRequest(BaseModel):
 def sse(event: str, data: str) -> str:
     lines = data.splitlines() or [""]
     return f"event: {event}\n" + "".join(f"data: {line}\n" for line in lines) + "\n"
-
-
-def _badge(text: str, kind: str) -> str:
-    return f'<li class="badge badge-{kind}">{html.escape(text)}</li>'
-
-
-def progress_html(event: Dict[str, Any]) -> str | None:
-    kind = event.get("type")
-    if kind == "node_start":
-        label = NODE_LABELS.get(event["node"], event["node"])
-        if event["node"] == "investigator" and event.get("attempt"):
-            label += f" (retry {event['attempt']})"
-        return _badge(label, "node")
-    if kind == "tool_start":
-        return _badge(f"tool: {event['tool']}", "tool")
-    return None
 
 
 _TABLE_RE = re.compile(r"(?m)^\| Timestamp.*(?:\n\|.*)*")
@@ -138,15 +119,16 @@ def report_html(state: Dict[str, Any]) -> str:
 
 
 async def stream_events(runner: Runner, video_url: str) -> AsyncGenerator[str, None]:
+    """SSE frames: `agent` (JSON progress event), `report` (sanitized HTML), `error`, then `done`."""
     try:
         async for event in runner(video_url):
             if event.get("type") == "final":
                 yield sse("report", report_html(event["state"]))
-            elif (badge := progress_html(event)) is not None:
-                yield sse("progress", badge)
+            elif event.get("type") in PROGRESS_EVENT_TYPES:
+                yield sse("agent", json.dumps(event, ensure_ascii=False, default=str))
     except Exception as exc:
         log.exception("analysis failed")
-        yield sse("error", f'<p class="error">Analysis failed: {html.escape(str(exc))}</p>')
+        yield sse("error", f"Analysis failed: {exc}")
     yield sse("done", "complete")
 
 
@@ -176,18 +158,6 @@ async def analyze(body: AnalyzeRequest, runner: Runner = Depends(get_runner)):
         "saved_to_memory": final.get("saved_to_memory", False),
         "error_message": final.get("error_message"),
     }
-
-
-@app.get("/ui/panel", response_class=HTMLResponse)
-async def ui_panel(video_url: str = Depends(valid_video_url)):
-    src = f"/api/analyze/stream?video_url={quote(video_url, safe='')}"
-    return (
-        f'<div hx-ext="sse" sse-connect="{html.escape(src)}" sse-close="done" class="panel">'
-        '<ul class="steps" sse-swap="progress" hx-swap="beforeend"></ul>'
-        '<div sse-swap="error"></div>'
-        '<div sse-swap="report"></div>'
-        "</div>"
-    )
 
 
 @app.get("/")

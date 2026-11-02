@@ -75,3 +75,55 @@ button { font: inherit; cursor: pointer; }
 .claim-body .meta { color: var(--muted); font-size: .85rem; }
 .sources { margin: .5rem 0 0; padding-left: 1.2rem; font-size: .85rem; overflow-wrap: anywhere; }
 @media (max-width: 30rem) { .claim summary { flex-direction: column; gap: .35rem; } .claim summary::after { display: none; } }
+
+/* Live run: video card, activity timeline, findings */
+#run { margin-top: 2rem; display: grid; gap: 1.25rem; }
+.video-card { padding: .9rem 1.1rem; border: 1px solid var(--border); border-radius: .7rem; background: var(--surface); animation: rise .3s ease-out; }
+.video-title { font-weight: 700; }
+.video-meta { color: var(--muted); font-size: .9rem; }
+
+.activity { border: 1px solid var(--border); border-radius: .7rem; background: var(--surface); }
+.activity > summary { display: flex; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; cursor: pointer; font-weight: 600; list-style: none; }
+.activity > summary::-webkit-details-marker { display: none; }
+.activity > summary::before { content: "▸"; margin-right: .5rem; color: var(--muted); display: inline-block; transition: transform .15s; }
+.activity[open] > summary::before { transform: rotate(90deg); }
+.activity-title { flex: 1; }
+.activity-meta { color: var(--muted); font-weight: 400; font-size: .85rem; font-variant-numeric: tabular-nums; }
+.timeline, .group-steps { list-style: none; margin: 0; padding: 0; }
+.timeline { padding: 0 1rem 1rem; }
+.group { margin-top: .9rem; animation: rise .25s ease-out; }
+.group-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); font-weight: 700; margin-bottom: .35rem; }
+.group-steps { border-left: 2px solid var(--border); margin-left: .45rem; padding-left: 1rem; display: grid; gap: .5rem; }
+.step { display: flex; gap: .65rem; animation: rise .25s ease-out; }
+.marker { flex: none; width: 1.1rem; height: 1.1rem; margin-top: .2rem; border-radius: 50%; display: grid; place-items: center; font-size: .7rem; font-weight: 700; border: 2px solid var(--border); }
+.step.running .marker { border-color: var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; }
+.step.ok .marker { background: var(--good-bg); border-color: var(--good); color: var(--good); }
+.step.failed .marker { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); }
+.step-title { font-weight: 500; }
+.step.thinking .step-title { font-style: italic; }
+.step.running .step-title::after { content: "…"; }
+.step-detail { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
+.step-result { color: var(--muted); font-size: .85rem; animation: rise .25s ease-out; }
+.step.failed .step-result { color: var(--warn); }
+.note { background: var(--bg); border: 1px solid var(--border); border-radius: .6rem .6rem .6rem .1rem; padding: .45rem .75rem; font-size: .9rem; color: var(--text); width: fit-content; max-width: 100%; animation: rise .25s ease-out; }
+
+.findings h2 { font-size: 1.1rem; margin: 0 0 .6rem; }
+.overview-card { padding: .9rem 1.1rem; border: 1px solid var(--border); border-radius: .7rem; background: var(--surface); margin-bottom: .75rem; animation: rise .3s ease-out; }
+.overview-head { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .4rem; }
+.chip { font-size: .75rem; font-weight: 600; padding: .1rem .6rem; border-radius: 999px; background: var(--none-bg); color: var(--text); }
+.chip.muted { color: var(--muted); } .chip.warn { background: var(--warn-bg); color: var(--warn); }
+.overview-verdict { margin: .2rem 0; font-weight: 600; }
+.meta { margin: .2rem 0; color: var(--muted); font-size: .85rem; }
+
+.findings .claim { padding: .7rem 1rem; }
+.claim-row { display: flex; gap: .75rem; align-items: baseline; }
+.claim-evidence { margin: .4rem 0 .2rem; }
+.claim-meta { color: var(--muted); font-size: .8rem; }
+.claim.pending .verdict { animation: pulse 1.2s ease-in-out infinite; }
+.claim.revealed { animation: flash .9s ease-out; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes pulse { 50% { opacity: .45; } }
+@keyframes flash { from { box-shadow: 0 0 0 3px var(--accent); } to { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } .step.running .marker { border-top-color: var(--accent); } }

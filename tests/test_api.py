@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, AsyncGenerator, Dict
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,13 +16,17 @@ URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 async def fake_runner(video_url: str) -> AsyncGenerator[Dict[str, Any], None]:
     yield {"type": "node_start", "node": "triage"}
-    yield {"type": "tool_start", "tool": "get_video_metadata"}
-    yield {"type": "tool_end", "tool": "get_video_metadata", "ok": True}
+    yield {"type": "tool_start", "id": "a1", "tool": "get_video_metadata", "title": "Reading the video's details", "detail": None}
+    yield {"type": "tool_end", "id": "a1", "tool": "get_video_metadata", "ok": True, "summary": "“T” by C"}
+    yield {"type": "note", "text": "Investigating: “x”"}
+    yield {"type": "something_internal", "secret": 1}
     yield {"type": "node_end", "node": "triage"}
     yield {
         "type": "final",
         "state": {
-            "final_report_md": "# Report\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n<script>alert(1)</script>\n\n[x](javascript:alert(1))",
+            "final_report_md": "\n".join(
+                ["# Report", "", "| a | b |", "| - | - |", "| 1 | 2 |", "", "<script>alert(1)</script>", "", "[x](javascript:alert(1))"]
+            ),
             "overall_accuracy_score": 77,
             "saved_to_memory": True,
         },
@@ -60,11 +66,11 @@ def test_stream_headers_and_framing(client):
         assert r.headers["cache-control"] == "no-cache"
         body = "".join(r.iter_text())
     events = parse_sse(body)
-    names = [e for e, _ in events]
-    assert names[0] == "progress"
-    assert names[-2:] == ["report", "done"]
-    progress = " ".join(d for e, d in events if e == "progress")
-    assert "Triage" in progress and "get_video_metadata" in progress
+    assert [e for e, _ in events] == ["agent"] * 5 + ["report", "done"]
+    payloads = [json.loads(d) for e, d in events if e == "agent"]
+    assert [p["type"] for p in payloads] == ["node_start", "tool_start", "tool_end", "note", "node_end"]
+    assert payloads[1]["title"] == "Reading the video's details" and payloads[2]["summary"] == "“T” by C"
+    assert "something_internal" not in body  # unknown event types are not forwarded
 
 
 def test_stream_report_is_rendered_and_sanitized(client):
@@ -107,17 +113,9 @@ def test_post_analyze_validates(client):
     assert client.post("/api/analyze", json={"video_url": "nope"}).status_code == 422
 
 
-def test_ui_panel_embeds_sse_connection(client):
-    r = client.get("/ui/panel", params={"video_url": URL})
-    assert r.status_code == 200
-    assert 'hx-ext="sse"' in r.text
-    assert "sse-connect=\"/api/analyze/stream?video_url=https%3A%2F%2Fwww.youtube.com" in r.text
-    assert 'sse-close="done"' in r.text
-
-
 def test_index_served(client):
     r = client.get("/")
-    assert r.status_code == 200 and "htmx" in r.text.lower()
+    assert r.status_code == 200 and "EventSource" in r.text
 
 
 def test_report_renders_claims_as_accordion_and_escapes():

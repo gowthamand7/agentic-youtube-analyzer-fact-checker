@@ -226,3 +226,38 @@ def test_scoring_and_helpers():
     assert enforce_evidence({"verdict": "Verified", "sources": ["not-a-url"], "evidence": ""})["verdict"] == "Unverified"
     assert parse_tool_result([{"type": "text", "text": '{"a": 1}'}]) == {"a": 1}
     assert parse_tool_result("plain") == {"raw": "plain"}
+
+
+async def test_stream_emits_human_readable_progress_events():
+    llm = FakeLLM(
+        {ExtractionOutput: [EXTRACTION], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]},
+        tool_turns=[
+            AIMessage(content="Checking the official benchmarks first.", tool_calls=[{"name": "search_web_factcheck", "args": {"query": "x faster"}, "id": "1"}]),
+            AIMessage(content="done"),
+        ],
+    )
+    events, _ = await run(build_graph(make_tools([]), llm))
+    kinds = [e["type"] for e in events]
+
+    assert {"video", "overview", "claims", "verdict", "note"} <= set(kinds)
+    assert kinds.index("overview") < kinds.index("claims") < kinds.index("verdict")
+    search = next(e for e in events if e["type"] == "tool_start" and e["tool"] == "search_web_factcheck")
+    assert search["title"] == "Searching the web" and search["detail"] == "x faster"
+    end = next(e for e in events if e["type"] == "tool_end" and e["id"] == search["id"])
+    assert end["ok"] is True and "1 sources" in end["summary"]
+    assert any(e["type"] == "note" and e["text"] == "Checking the official benchmarks first." for e in events)
+    assert any(e["type"] == "tool_start" and e["tool"] == "thinking" for e in events)
+    starts = [e["id"] for e in events if e["type"] == "tool_start"]
+    ends = [e["id"] for e in events if e["type"] == "tool_end"]
+    assert sorted(starts) == sorted(ends)  # every step that starts also finishes
+
+
+def test_narration_describes_tools_in_plain_language():
+    from agent.narration import describe_end, describe_start
+
+    assert describe_start("search_web_factcheck", {"query": "q", "search_depth": "advanced"}) == ("Searching the web (deep search)", "q")
+    title, detail = describe_start("search_social_reactions", {"topic_query": "t", "platforms": ["hackernews", "bluesky"]})
+    assert "Hacker News, Bluesky" in title and detail == "t"
+    assert describe_end("get_transcript", {"status": "OK", "segments": [1, 2], "language": "en"}) == (True, "2 lines (en)")
+    assert describe_end("get_comments", {"status": "ERROR", "message": "quota"}) == (False, "quota")
+    assert describe_end("execute_python_audit", {"stdout": "56088\n", "exit_code": 0}) == (True, "Result: 56088")

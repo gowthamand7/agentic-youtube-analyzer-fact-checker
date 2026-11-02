@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Mapping
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.config import get_stream_writer
 
 from agent import prompts
+from agent.narration import describe_end, describe_start
 from agent.report import (
     TRANSCRIPT_ERROR,
     build_save_payload,
@@ -65,6 +68,13 @@ def _without_thinking(messages: List[BaseMessage]) -> List[BaseMessage]:
     return cleaned
 
 
+def _ai_text(ai: AIMessage) -> str:
+    """Visible commentary the model wrote alongside its tool calls (thinking blocks excluded)."""
+    if isinstance(ai.content, str):
+        return ai.content.strip()
+    return "".join(b.get("text", "") for b in ai.content if isinstance(b, dict) and b.get("type") == "text").strip()
+
+
 class AgentNodes:
     def __init__(self, tools: Mapping[str, Any], llm: Any, max_tool_rounds: int = MAX_TOOL_ROUNDS) -> None:
         self.tools = tools
@@ -72,15 +82,31 @@ class AgentNodes:
         self.max_tool_rounds = max_tool_rounds
 
     async def _call(self, name: str, args: Dict[str, Any]) -> Any:
-        emit({"type": "tool_start", "tool": name})
+        call_id = uuid.uuid4().hex[:8]
+        title, detail = describe_start(name, args)
+        emit({"type": "tool_start", "id": call_id, "tool": name, "title": title, "detail": detail})
         try:
             if name not in self.tools:
                 raise KeyError(f"tool {name!r} is not available")
             result = parse_tool_result(await self.tools[name].ainvoke(args))
         except Exception as exc:  # tool failures degrade the analysis instead of aborting it
             result = {"status": "ERROR", "message": f"{type(exc).__name__}: {exc}"}
-        emit({"type": "tool_end", "tool": name, "ok": not (isinstance(result, dict) and result.get("status") == "ERROR")})
+        ok, summary = describe_end(name, result)
+        emit({"type": "tool_end", "id": call_id, "tool": name, "ok": ok, "summary": summary})
         return result
+
+    @asynccontextmanager
+    async def _thinking(self, title: str, detail: str | None = None):
+        """Timeline step for an LLM call, so the UI shows the agent working between tool calls."""
+        step_id = uuid.uuid4().hex[:8]
+        info = {"summary": "Done"}
+        emit({"type": "tool_start", "id": step_id, "tool": "thinking", "title": title, "detail": detail})
+        try:
+            yield info
+        except Exception:
+            emit({"type": "tool_end", "id": step_id, "tool": "thinking", "ok": False, "summary": "Failed"})
+            raise
+        emit({"type": "tool_end", "id": step_id, "tool": "thinking", "ok": True, "summary": info["summary"]})
 
     # ---- Node 1 -------------------------------------------------------------------------------
     async def triage_node(self, state: AgentState) -> Dict[str, Any]:
@@ -92,6 +118,7 @@ class AgentNodes:
         history = await self._call("get_channel_history", {"channel_id": meta["channel_id"]})
         if not isinstance(history, dict) or history.get("status") == "ERROR":
             history = {}
+        emit({"type": "video", "title": meta["title"], "channel": meta["channel_name"], "upload_date": meta["upload_date"][:10]})
         return {"video_id": meta["video_id"], "metadata": meta, "channel_history": history, "retry_count": 0}
 
     # ---- Node 2 -------------------------------------------------------------------------------
@@ -131,11 +158,26 @@ class AgentNodes:
             f"TRANSCRIPT (language={transcript['language']}):\n{transcript_text}\n\n"
             f"TOP VIEWER COMMENTS:\n{chr(10).join(comment_lines) or '(none available)'}"
         )
-        out: ExtractionOutput = await self.llm.with_structured_output(ExtractionOutput).ainvoke(
-            [SystemMessage(content=prompts.EXTRACTION_SYSTEM), HumanMessage(content=human)]
-        )
+        async with self._thinking(
+            "Reading the transcript for clickbait, sponsors and checkable claims", "this can take a few seconds"
+        ) as step:
+            out: ExtractionOutput = await self.llm.with_structured_output(ExtractionOutput).ainvoke(
+                [SystemMessage(content=prompts.EXTRACTION_SYSTEM), HumanMessage(content=human)]
+            )
+            step["summary"] = f"Found {len(out.claims)} claim{'s' if len(out.claims) != 1 else ''} to verify"
         summary = out.model_dump()
         claims = summary.pop("claims")
+        emit(
+            {
+                "type": "overview",
+                "domain": out.domain,
+                "clickbait": summary["clickbait"],
+                "sponsors": [s["name"] for s in summary["sponsors"]],
+                "has_paid_promotion": out.has_paid_promotion,
+                "bias_notes": out.bias_notes,
+            }
+        )
+        emit({"type": "claims", "claims": claims})
         return {
             "transcript_summary": summary,
             "extracted_claims": claims,
@@ -161,11 +203,15 @@ class AgentNodes:
             f"Topic tags: {summary.get('topic_tags', [])}\n\n{task}"
         )
         messages: List[BaseMessage] = [SystemMessage(content=prompts.INVESTIGATOR_SYSTEM), HumanMessage(content=human)]
+        for c in feedback or state["extracted_claims"]:
+            emit({"type": "note", "text": f"Investigating: “{c['claim']}”" + (f" — new angle: {c['suggested_query']}" if feedback else "")})
 
         bound = self.llm.bind_tools([self.tools[n] for n in INVESTIGATION_TOOLS if n in self.tools])
         for _ in range(self.max_tool_rounds):
             ai: AIMessage = await bound.ainvoke(messages)
             messages.append(ai)
+            if ai.tool_calls and (commentary := _ai_text(ai)):
+                emit({"type": "note", "text": commentary})
             if not ai.tool_calls:
                 break
             messages.extend(await asyncio.gather(*(self._run_tool_call(tc, retry) for tc in ai.tool_calls)))
@@ -173,9 +219,11 @@ class AgentNodes:
             messages.pop()
 
         messages.append(HumanMessage(content=prompts.VERIFICATION_FINAL))
-        out: VerificationOutput = await self.llm.with_structured_output(VerificationOutput).ainvoke(
-            _without_thinking(messages)
-        )
+        async with self._thinking("Weighing the evidence and writing verdicts") as step:
+            out: VerificationOutput = await self.llm.with_structured_output(VerificationOutput).ainvoke(
+                _without_thinking(messages)
+            )
+            step["summary"] = f"{len(out.results)} verdict{'s' if len(out.results) != 1 else ''} drafted"
 
         merged = {r["claim"]: r for r in state.get("verification_results", [])}
         for r in out.results:
@@ -193,6 +241,9 @@ class AgentNodes:
                     "confidence": "low",
                 }
             )
+
+        for r in results:
+            emit({"type": "verdict", "result": r})
 
         seen = {a["detail"] for a in state.get("community_insights", [])}
         insights = list(state.get("community_insights", [])) + [
@@ -218,13 +269,21 @@ class AgentNodes:
             return {"critic_feedback": []}
 
         by_claim = {r["claim"]: r for r in weak}
+        emit(
+            {
+                "type": "note",
+                "text": f"{len(weak)} claim{'s have' if len(weak) != 1 else ' has'} thin evidence. "
+                f"Retrying with sharper searches (attempt {retry + 1} of {MAX_RETRIES}).",
+            }
+        )
         try:
-            out: CriticOutput = await self.llm.with_structured_output(CriticOutput).ainvoke(
-                [
-                    SystemMessage(content=prompts.CRITIC_SYSTEM),
-                    HumanMessage(content=json.dumps([{"claim": r["claim"], "evidence": r["evidence"]} for r in weak], ensure_ascii=False)),
-                ]
-            )
+            async with self._thinking("Reviewing weak results and rewriting the searches"):
+                out: CriticOutput = await self.llm.with_structured_output(CriticOutput).ainvoke(
+                    [
+                        SystemMessage(content=prompts.CRITIC_SYSTEM),
+                        HumanMessage(content=json.dumps([{"claim": r["claim"], "evidence": r["evidence"]} for r in weak], ensure_ascii=False)),
+                    ]
+                )
             queries = {w.claim: w.suggested_query for w in out.weak_claims}
         except Exception:
             queries = {}
