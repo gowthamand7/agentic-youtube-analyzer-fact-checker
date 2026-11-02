@@ -167,7 +167,7 @@ def build_report(state: Dict[str, Any], results: List[Dict[str, Any]], score: in
         "video_type": summary.get("video_type", "other"),
         "topic_tags": summary.get("topic_tags", []),
         "headline": summary.get("clickbait", {}),
-        "summary": {"tldr": summary.get("tldr", ""), "key_points": key_points},
+        "summary": {"tldr": state.get("overview") or summary.get("tldr", ""), "key_points": key_points},
         "topics": state.get("topics", []),
         "fact_check": fact_check,
         "corrections": corrections,

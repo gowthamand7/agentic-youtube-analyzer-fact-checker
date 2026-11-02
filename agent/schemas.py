@@ -62,7 +62,7 @@ class ExtraSection(BaseModel):
 
 class VideoAnalysis(BaseModel):
     video_type: VideoType
-    tldr: str = Field(description="2-4 sentence English summary of what the video actually says, including the parts that are correct.")
+    tldr: str = Field(description="2-3 sentence English summary of what the video is about and its main point, in direct voice (no 'the host says'), including the parts that are correct.")
     key_points: List[KeyPoint] = Field(description="The knowledge a viewer gains, in video order. Scale with video length (4-12).")
     clickbait: ClickbaitBuster
     claims: List[Claim] = Field(description="Importance-ranked CHECKABLE factual claims only.", max_length=8)
@@ -130,9 +130,9 @@ class Topic(BaseModel):
     title: str = Field(description="Short reader-facing name of the topic, e.g. 'How the cache invalidates'.")
     timestamp: str = Field(description="MM:SS in the video where the host starts on this topic; copy one that appears in the transcript.")
     summary: str = Field(
-        description="One comprehensive paragraph (4-7 sentences, plain prose, no bullet points) on this topic, written for someone who "
-        "will not watch the video. Weave together what the host said, what the web evidence confirms or contradicts, and what the "
-        "viewer comments add."
+        description="One short paragraph (at most 3 sentences and 60 words, plain prose, no bullet points) on this topic, written in direct first-party voice "
+        "for someone who will not watch the video. State the facts yourself; never write 'the host says'. Correct anything the video "
+        "got wrong using the web evidence, and work in what viewer comments add."
     )
     source_urls: List[str] = Field(
         default_factory=list, description="URLs from the provided evidence that this paragraph relied on. Never invent a URL."
@@ -140,4 +140,7 @@ class Topic(BaseModel):
 
 
 class SynthesisOutput(BaseModel):
+    overview: str = Field(
+        default="", description="2-3 sentence first-party overview: what the video is about and the main takeaway. Never starts with 'The host' or 'The video'."
+    )
     topics: List[Topic] = Field(description="Every distinct topic the video discusses, in video order.")

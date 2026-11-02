@@ -450,6 +450,7 @@ class AgentNodes:
         human = "\n\n".join(sections)
         allowed = {u for r in results for u in r.get("sources", [])} | {o["url"] for o in outside}
         topics: List[Dict[str, Any]] = []
+        overview = ""
         try:
             async with self._thinking(
                 "Writing the topic-by-topic summary", "combining the video, the web evidence and the comments", input_chars=len(human)
@@ -459,6 +460,7 @@ class AgentNodes:
                     SynthesisOutput, [SystemMessage(content=prompts.SYNTHESIS_SYSTEM), HumanMessage(content=human)]
                 )
                 step["output"] = out.model_dump_json()
+                overview = out.overview.strip()
                 topics = [
                     {**t.model_dump(), "source_urls": [u for u in t.source_urls if u in allowed]}
                     for t in out.topics
@@ -473,7 +475,7 @@ class AgentNodes:
                 {"title": kp["concept"], "timestamp": kp["timestamp"], "summary": kp["point"], "source_urls": []}
                 for kp in summary.get("key_points", [])
             ]
-        return {"topics": topics}
+        return {"topics": topics, "overview": overview}
 
     # ---- Node 6 -------------------------------------------------------------------------------
     async def commit_and_report_node(self, state: AgentState) -> Dict[str, Any]:

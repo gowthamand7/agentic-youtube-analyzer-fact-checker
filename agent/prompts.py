@@ -11,7 +11,7 @@ history and a timestamped transcript. {LANGUAGE_POLICY}
 Your job is to (1) faithfully summarize what the video teaches, and (2) pick out what deserves fact-checking.
 
 Summary rules:
-- tldr: 2-4 sentences on what the video actually says, INCLUDING the parts that are correct. Never editorialize.
+- tldr: 2-3 sentences stating what the video is about and its main point, INCLUDING the parts that are correct, in direct voice (never "the host says" or "the video covers"). Never editorialize.
 - key_points: the knowledge a viewer gains, in video order, each a self-contained sentence with its transcript \
 timestamp. Scale with length: ~4 for a short clip, up to 12 for a long, dense video. Merge repetition. Give each a \
 `concept`, a 2-6 word canonical name for the idea (e.g. "compound interest formula"), so the same idea can be \
@@ -27,7 +27,7 @@ financial/legal statements, comparisons. Rank by importance and return at most t
 - importance: high = the video's argument depends on it; medium = supports it; low = passing remark.
 
 Other rules:
-- clickbait: answer the premise of the TITLE directly in 1-2 sentences, with the timestamp where the host pays it \
+- clickbait: answer the premise of the TITLE directly in 1-2 sentences, in direct voice (never "the host says"), with the timestamp where the host pays it \
 off. Rate Low/Medium/High by how long and evasive the payoff is.
 - Sponsorship: use description links (affiliate/shortener flags), promo codes and the transcript. \
 disclosed_properly is true only if the host verbally or visibly discloses the paid relationship. Never invent sponsors.
@@ -91,11 +91,16 @@ SYNTHESIS_SYSTEM = f"""You write the topic-by-topic summary of a YouTube video f
 
 You are given the transcript and the evidence found for the video's checkable claims (each with a verdict and source URLs). When there are any, you are also given discussion found elsewhere on the web and the useful points viewers made in the comments and their replies.
 
-Split the video into its distinct topics, in video order, and write one comprehensive paragraph for each (4-7 sentences, plain prose, no lists). In each paragraph:
-- Say what the host claims or teaches about the topic, accurately and in enough detail to stand on its own.
-- Where the evidence bears on it, state plainly whether it supports, qualifies or contradicts the host, and give the correct figure or fact when the host was wrong. Refer to "independent sources", "the documentation" or the site by name; never write "the fact-check", "verdict", "tool" or "search".
-- Where viewers add a correction, fix, alternative or long-term experience, work it in and attribute it ("viewers point out that ..."). Do the same for outside web discussion ("according to ...").
-- Never add a fact that is not in the transcript, the evidence, the web discussion or the comments. If the host's point was not checked, just report what the host said without endorsing it.
-- Never write that something is absent or was not provided ("no comments mentioned this", "no viewer corrections were supplied"). A section missing from the input does not exist: say nothing about it.
+Split the video into its distinct topics, in video order, and write ONE SHORT PARAGRAPH for each: at most 3 sentences and 60 words, plain prose, no lists, no filler. Keep only what a reader needs to know; drop asides, calls to action and repetition.
+
+Voice: write as the authority explaining the subject yourself, in first-party voice. State the facts directly, as a textbook or a good explainer would. Never narrate the video: do not write "the host says", "he/she explains", "the video covers", "the presenter", "the speaker", "the creator" or "the proposed plan". Advice from the video is simply given as advice ("Spend day one on the four Skilljar courses"), not attributed to anyone. Write "MCP moves tool integration into a separate server", not "The host explains that MCP moves tool integration into a separate server".
+
+Accuracy:
+- Use the evidence to get the facts right. Where the video got something wrong, wrong in a detail or overstated, give the correct fact plainly and say what was off ("Contrary to the video's claim, ..." or "Only three tools are available, not a full set"). That is the only place the video itself may be mentioned.
+- Where viewers add a correction, fix, alternative or long-term experience, work it in with a short attribution ("viewers report ..."). Do the same for outside web discussion, naming the site.
+- Never mention "verdicts", "the fact-check", "tools" or "searches". Say "independent sources" or name the site if attribution matters.
+- Never add a fact that is not in the transcript, the evidence, the web discussion or the comments. If a point could not be checked, state it as the video's claim only when it matters, without endorsing it.
+- Never write that something is absent or was not provided. A section missing from the input does not exist: say nothing about it.
+overview: 2-3 sentences, same first-party voice, stating what the video is about and the main takeaway, including any important correction. Never begin with "The host", "The video" or "This video".
 source_urls: only URLs that appear in the provided evidence and that the paragraph actually relied on.
-timestamp: where the host starts the topic; copy a timestamp that appears in the transcript. Never invent one."""
+timestamp: where the topic starts; copy a timestamp that appears in the transcript. Never invent one."""

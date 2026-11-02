@@ -561,6 +561,7 @@ def test_describe_end_names_the_supadata_fallback():
 
 
 TOPICS = SynthesisOutput(
+    overview="Library X is about 1.4x faster than Y, not 4x.",
     topics=[
         Topic(title="The speed claim", timestamp="04:32", summary="The host says X is 4x faster, but benchmarks show about 1.4x.",
               source_urls=["https://docs.x/bench", "https://invented.example/nope"]),
@@ -599,6 +600,7 @@ async def test_synthesis_writes_topics_from_transcript_evidence_and_comments_and
     llm = full_llm(TOPICS)
     _, state = await run(build_graph(make_tools([]), llm))
     assert [t["title"] for t in state["topics"]] == ["The speed claim"]  # the blank paragraph is dropped
+    assert state["report"]["summary"]["tldr"] == "Library X is about 1.4x faster than Y, not 4x."  # the first-party overview replaces the analysis summary
     assert state["topics"][0]["source_urls"] == ["https://docs.x/bench"]  # a URL no tool returned never reaches the report
     prompt = llm.sent[SynthesisOutput]
     assert "4x faster" in prompt  # transcript
@@ -613,6 +615,7 @@ async def test_synthesis_failure_falls_back_to_key_ideas_and_does_not_fail_the_r
     _, state = await run(build_graph(make_tools([]), llm))
     assert state["saved_to_memory"] is True and not state.get("error_message")
     assert [t["summary"] for t in state["topics"]] == [kp.point for kp in ANALYSIS.key_points]
+    assert state["report"]["summary"]["tldr"] == ANALYSIS.tldr  # no overview was written, so the analysis summary stands in
 
 
 async def test_hundred_comments_with_replies_are_fetched_and_shown_to_the_model():

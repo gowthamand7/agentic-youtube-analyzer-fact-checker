@@ -14,6 +14,7 @@ class AgentState(TypedDict, total=False):
     channel_history: Dict[str, Any]
     transcript_summary: Dict[str, Any]
     transcript_text: str  # timestamped transcript as fed to the model, reused by the synthesis step
+    overview: str  # first-party overview written by the synthesis step
     topics: List[Dict[str, Any]]  # topic-wise summaries written by the synthesis step
     extracted_claims: List[Dict[str, Any]]
     comment_insights: List[Dict[str, Any]]  # new information found in viewer comments
