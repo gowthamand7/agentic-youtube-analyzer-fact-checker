@@ -57,6 +57,8 @@ type SocialSearcher struct {
 	RedditClientID     string
 	RedditClientSecret string
 
+	Tavily *TavilyClient // optional: Reddit fallback via site-scoped search
+
 	tokenMu     sync.Mutex
 	redditToken string
 	tokenExpiry time.Time
@@ -239,10 +241,16 @@ func (s *SocialSearcher) searchReddit(ctx context.Context, query string) ([]Soci
 	if s.RedditClientID != "" && s.RedditClientSecret != "" {
 		if tok, err := s.redditAccessToken(ctx); err == nil {
 			path, headers = "/search", map[string]string{"Authorization": "bearer " + tok}
+		} else if s.Tavily != nil {
+			log.Printf("[WARN] reddit oauth failed, using Tavily site search: %v", err)
+			return s.searchRedditViaTavily(ctx, query)
 		} else {
 			log.Printf("[WARN] reddit oauth failed, falling back to public search: %v", err)
 			base = defaultRedditPubURL
 		}
+	} else if s.Tavily != nil {
+		// Reddit no longer grants self-serve API apps and blocks anonymous JSON; search the site via Tavily.
+		return s.searchRedditViaTavily(ctx, query)
 	}
 	var r struct {
 		Data struct {
@@ -339,6 +347,21 @@ func (s *SocialSearcher) searchStack(ctx context.Context, query string) ([]Socia
 	items := []SocialItem{}
 	for _, it := range r.Items {
 		items = append(items, SocialItem{Platform: "stackexchange", Title: it.Title, URL: it.Link, Author: it.Owner.DisplayName, Score: it.Score, Comments: it.AnswerCount})
+	}
+	return items, nil
+}
+
+func (s *SocialSearcher) searchRedditViaTavily(ctx context.Context, query string) ([]SocialItem, error) {
+	res, err := s.Tavily.Search(ctx, query, "basic", []string{"reddit.com"})
+	if err != nil {
+		return nil, err
+	}
+	items := []SocialItem{}
+	for i, r := range res.Results {
+		if i >= perPlatformLimit {
+			break
+		}
+		items = append(items, SocialItem{Platform: "reddit", Title: r.Title, Snippet: truncate(r.Content, snippetLimit), URL: r.URL})
 	}
 	return items, nil
 }

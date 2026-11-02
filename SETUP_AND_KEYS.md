@@ -93,5 +93,5 @@ go test ./mcp-servers/memory-db/... ./mcp-servers/sandbox/... ./mcp-servers/veri
 ```
 
 Notes:
-- Reddit is optional. If the OAuth credentials are rejected, the server falls back to the public search, which Reddit often blocks (HTTP 403); the other platforms still return results.
+- Reddit needs no credentials: Reddit no longer grants self-serve API apps, so Reddit lookups run as a Tavily search scoped to `reddit.com` (1 credit each). If `REDDIT_CLIENT_ID`/`SECRET` are set and valid, the direct API is used instead.
 - YouTube may rate-limit transcript requests from your IP after repeated runs; the analysis then aborts with a clear message.

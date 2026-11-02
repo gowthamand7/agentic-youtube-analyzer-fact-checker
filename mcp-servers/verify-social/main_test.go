@@ -203,3 +203,22 @@ func TestSearchSocialHandlerDefaultsPlatforms(t *testing.T) {
 		t.Error("blank query must be an error")
 	}
 }
+
+func TestRedditFallsBackToTavilyWithoutCredentials(t *testing.T) {
+	var got map[string]any
+	tv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"results":[{"title":"Thread","url":"https://www.reddit.com/r/x/comments/1/","content":"c"}]}`))
+	}))
+	defer tv.Close()
+	s := newTestSocial(t, http.NewServeMux()) // reddit endpoints would 404 if touched
+	s.Tavily = &TavilyClient{BaseURL: tv.URL, APIKey: "k", HTTP: tv.Client()}
+
+	res := s.Search(context.Background(), "t", []string{"reddit"})
+	if len(res.Results) != 1 || res.Results[0].Platform != "reddit" || res.Errors != nil {
+		t.Fatalf("unexpected: %+v", res)
+	}
+	if d, _ := got["include_domains"].([]any); len(d) != 1 || d[0] != "reddit.com" {
+		t.Errorf("tavily not scoped to reddit.com: %v", got)
+	}
+}

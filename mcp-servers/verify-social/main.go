@@ -84,6 +84,7 @@ func main() {
 	}
 	if key := os.Getenv("TAVILY_API_KEY"); key != "" {
 		deps.Tavily = &TavilyClient{APIKey: key}
+		deps.Social.Tavily = deps.Tavily
 	} else {
 		log.Println("[WARN] TAVILY_API_KEY not set; search_web_factcheck will return errors")
 	}
