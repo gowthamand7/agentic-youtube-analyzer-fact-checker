@@ -89,7 +89,7 @@ uv run uvicorn app.main:app --port 8000
 
 # tests
 uv run pytest
-go test ./mcp-servers/...
+go test ./mcp-servers/memory-db/... ./mcp-servers/sandbox/... ./mcp-servers/verify-social/...
 ```
 
 Notes:
