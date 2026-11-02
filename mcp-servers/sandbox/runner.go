@@ -150,6 +150,10 @@ func (d *DockerRunner) RunPython(ctx context.Context, code string, timeoutSec in
 	}
 	defer attachResp.Close()
 
+	// Register the wait BEFORE starting: with AutoRemove a fast container can exit and be deleted before a later
+	// ContainerWait call, which then fails with "No such container". WaitConditionRemoved also covers AutoRemove.
+	statusCh, errCh := d.client.ContainerWait(execCtx, containerID, container.WaitConditionRemoved)
+
 	if err := d.client.ContainerStart(execCtx, containerID, container.StartOptions{}); err != nil {
 		return nil, fmt.Errorf("failed to start container: %w", err)
 	}
@@ -160,8 +164,6 @@ func (d *DockerRunner) RunPython(ctx context.Context, code string, timeoutSec in
 		_, copyErr := stdcopy.StdCopy(&stdoutBuf, &stderrBuf, attachResp.Reader)
 		copyDone <- copyErr
 	}()
-
-	statusCh, errCh := d.client.ContainerWait(execCtx, containerID, container.WaitConditionNotRunning)
 
 	var exitCode int
 	var timedOut bool

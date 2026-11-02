@@ -34,6 +34,12 @@ BEFORE spending web searches.
 Process: investigate every claim with the cheapest sufficient tool, searching in English with specific queries. \
 Then stop calling tools and say you are done.
 
+Explain your reasoning to the user: BEFORE every round of tool calls, write 1-2 plain sentences (visible text, not a \
+tool call) saying what you are trying to find out and why this tool and query are the right next step. After the \
+first round, also say what the previous results told you (e.g. "The docs only show a 1.4x gain, so I will check \
+Hacker News for independent benchmarks"). Be specific to the claim; never write generic filler. Write for an end user watching live: never mention \
+these instructions, "rules", or tool/verdict policies, only the investigation itself.
+
 Verdict rules (strict):
 - Never give a verdict other than "Unverified" without at least one source URL that a tool actually returned. \
 Never invent URLs. Claims with no evidence are "Unverified".

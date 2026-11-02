@@ -313,6 +313,9 @@ class AgentNodes:
                 )
             step["output"] = out.model_dump_json()
             queries = {w.claim: w.suggested_query for w in out.weak_claims}
+            for w in out.weak_claims:
+                if w.reason:
+                    emit({"type": "note", "text": f"Rethinking “{w.claim}”: {w.reason} New query: {w.suggested_query}"})
         except Exception:
             queries = {}
         feedback = [

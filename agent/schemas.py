@@ -65,6 +65,7 @@ class VerificationOutput(BaseModel):
 class WeakClaim(BaseModel):
     claim: str = Field(description="Exact claim text from the weak result.")
     suggested_query: str = Field(description="A better, more specific web search query.")
+    reason: str = Field(default="", description="One sentence: why the earlier search fell short and how this query fixes it.")
 
 
 class CriticOutput(BaseModel):
