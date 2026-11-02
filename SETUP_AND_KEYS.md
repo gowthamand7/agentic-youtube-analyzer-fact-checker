@@ -158,3 +158,13 @@ It shows every tool call with parameter names, results (truncated at 3000 charac
 API: `GET /api/knowledge`, `POST /api/knowledge {"video_id", "item_id"}` (the text is taken from the saved report, never from the client), `DELETE /api/knowledge/{id}`.
 
 Reports saved before v2 still open in the old layout; press **Re-run analysis** to upgrade one. See `docs/ROADMAP.md` for the held hosted-API and Chrome-extension work.
+
+## 9. Transcript fallback (Supadata)
+
+The scraper (`youtube-transcript-api`) is always tried first and is free. If YouTube blocks it, `youtube-mcp` asks
+Supadata instead (`mode=native`, so only existing captions are fetched, never AI-generated ones).
+
+- Set `SUPADATA_API_KEYS=key1,key2,key3,...` in `.env` (one key per account; `SUPADATA_API_KEY` also works for one).
+- Keys are used in rotation. A key answering 401/402/403/429 is skipped for an hour; the next one is tried.
+- Fallback transcripts are cached like any other, so each video costs at most one Supadata credit.
+- Restart the app after changing `.env` (the MCP server reads keys once at startup).

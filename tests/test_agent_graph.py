@@ -545,3 +545,12 @@ async def test_key_points_are_shown_in_video_order():
     llm = FakeLLM({VideoAnalysis: [shuffled], CommentsAnalysis: [COMMENTS], VerificationOutput: [VerificationOutput(results=[verdict()])], CriticOutput: [CriticOutput(weak_claims=[])]})
     _, state = await run(build_graph(make_tools([]), llm))
     assert [k["point"] for k in state["report"]["summary"]["key_points"]] == ["Opening point.", "Early point.", "Late point.", "Very late point.", "Unparseable time."]
+
+
+def test_describe_end_names_the_supadata_fallback():
+    from agent.narration import describe_end
+    base = {"status": "OK", "segments": [1, 2], "language": "en", "source": "supadata"}
+    assert describe_end("get_transcript", {**base, "fallback_for": "REQUEST_BLOCKED"}) == (
+        True, "2 lines (en) via Supadata fallback (YouTube blocked the scraper)")
+    assert describe_end("get_transcript", {**base, "fallback_for": "TRANSCRIPT_ERROR", "cached": True}) == (
+        True, "2 lines (en) via Supadata fallback (the scraper failed) (cached)")

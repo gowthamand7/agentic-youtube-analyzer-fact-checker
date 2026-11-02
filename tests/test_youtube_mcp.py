@@ -306,3 +306,91 @@ def test_metadata_is_cached(tmp_path):
     b = extractor.fetch_metadata_cached("vid", client, cache)
     assert (a["cached"], b["cached"]) == (False, True) and b["title"] == "T"
     assert client.videos.return_value.list.return_value.execute.call_count == 1
+
+
+# ---- Supadata fallback ----
+from supadata import SupadataFallback  # noqa: E402
+
+
+class _Resp:
+    def __init__(self, status, body=None):
+        self.status_code, self._body = status, body
+
+    def json(self):
+        return self._body
+
+
+def _supadata(responses, keys=("k1", "k2"), clock=None):
+    """Fake HTTP layer: `responses` maps api key -> list of responses served in order."""
+    calls = []
+
+    def fake_get(url, params, headers, timeout):
+        key = headers["x-api-key"]
+        calls.append((key, params))
+        return responses[key].pop(0)
+
+    return SupadataFallback(list(keys), http_get=fake_get, clock=clock or (lambda: 0.0)), calls
+
+
+_OK_BODY = {"content": [{"text": "hi", "offset": 1500, "duration": 900, "lang": "en"}, {"text": "yo", "offset": 65000, "duration": 1, "lang": "en"}], "lang": "en", "availableLangs": ["en"]}
+
+
+def test_supadata_maps_milliseconds_and_uses_native_mode():
+    fb, calls = _supadata({"k1": [_Resp(200, _OK_BODY)]})
+    out = fb.fetch("vid", ["en"])
+    assert out["status"] == "OK" and out["source"] == "supadata"
+    assert [(s["timestamp"], s["start_sec"]) for s in out["segments"]] == [("00:01", 1.5), ("01:05", 65.0)]
+    assert calls[0][1]["mode"] == "native" and calls[0][1]["lang"] == "en"
+
+
+def test_supadata_skips_exhausted_key_and_remembers_it():
+    now = [0.0]
+    fb, calls = _supadata({"k1": [_Resp(429, {})], "k2": [_Resp(200, _OK_BODY), _Resp(200, _OK_BODY)]}, clock=lambda: now[0])
+    assert fb.fetch("v", None)["status"] == "OK"
+    assert [c[0] for c in calls] == ["k1", "k2"]
+    fb.fetch("v", None)
+    assert [c[0] for c in calls][2:] == ["k2"]  # k1 is cooling down, not retried
+    assert len(calls) == 3
+
+
+def test_supadata_all_keys_exhausted_and_no_transcript():
+    fb, _ = _supadata({"k1": [_Resp(402, {})], "k2": [_Resp(401, {})]})
+    assert fb.fetch("v", None)["status"] == "NO_FALLBACK"
+    assert fb.fetch("v", None)["status"] == "NO_FALLBACK"  # both in cooldown, no network call
+    fb2, _ = _supadata({"k1": [_Resp(206, {})]}, keys=("k1",))
+    assert fb2.fetch("v", None)["status"] == "TRANSCRIPTS_DISABLED"
+
+
+def test_fallback_used_only_when_scraper_blocked_and_result_cached(tmp_path):
+    from youtube_transcript_api import IpBlocked
+
+    cache = DiskCache(tmp_path)
+    blocked = MagicMock()
+    blocked.fetch.side_effect = IpBlocked("v")
+    fb, calls = _supadata({"k1": [_Resp(200, _OK_BODY)]}, keys=("k1",))
+    first = extractor.fetch_transcript_cached("v", None, blocked, cache, fallback=fb)
+    second = extractor.fetch_transcript_cached("v", None, blocked, cache, fallback=fb)
+    assert first["status"] == "OK" and first["source"] == "supadata" and first["fallback_for"] == "REQUEST_BLOCKED"
+    assert second["cached"] is True and len(calls) == 1  # paid call made once
+
+    ok_calls = []
+    extractor.fetch_transcript_cached("v2", None, _ok_api(ok_calls), cache, fallback=fb)
+    assert len(calls) == 1  # healthy scraper never touches Supadata
+
+
+def test_fallback_failure_keeps_scraper_block_status(tmp_path):
+    from youtube_transcript_api import IpBlocked
+
+    blocked = MagicMock()
+    blocked.fetch.side_effect = IpBlocked("v")
+    fb, _ = _supadata({"k1": [_Resp(429, {})]}, keys=("k1",))
+    out = extractor.fetch_transcript_cached("v", None, blocked, DiskCache(tmp_path), fallback=fb)
+    assert out["status"] == "REQUEST_BLOCKED"
+
+
+def test_supadata_rotates_round_robin_across_healthy_keys():
+    ok = lambda: [_Resp(200, _OK_BODY) for _ in range(3)]
+    fb, calls = _supadata({"k1": ok(), "k2": ok(), "k3": ok()}, keys=("k1", "k2", "k3"))
+    for _ in range(6):
+        fb.fetch("v", None)
+    assert [c[0] for c in calls] == ["k1", "k2", "k3", "k1", "k2", "k3"]

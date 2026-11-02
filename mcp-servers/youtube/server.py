@@ -14,6 +14,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 
 import extractor
 from cache import default_cache
+from supadata import SupadataFallback, default_fallback
 
 mcp = FastMCP("youtube-mcp")
 
@@ -29,6 +30,11 @@ def _data_api() -> Any:
 @lru_cache(maxsize=1)
 def _transcript_api() -> YouTubeTranscriptApi:
     return YouTubeTranscriptApi()
+
+
+@lru_cache(maxsize=1)
+def _supadata() -> Optional[SupadataFallback]:
+    return default_fallback()
 
 
 def _error(exc: Exception) -> Dict[str, Any]:
@@ -62,7 +68,9 @@ def get_transcript(
         video_id = extractor.parse_video_id(video_id)
     except ValueError as exc:
         return _error(exc)
-    return extractor.fetch_transcript_cached(video_id, languages, _transcript_api(), default_cache(), start_sec, end_sec)
+    return extractor.fetch_transcript_cached(
+        video_id, languages, _transcript_api(), default_cache(), start_sec, end_sec, fallback=_supadata()
+    )
 
 
 @mcp.tool()

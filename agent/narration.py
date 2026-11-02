@@ -56,7 +56,11 @@ def describe_end(tool: str, result: Any) -> Tuple[bool, str]:
     if tool == "get_transcript":
         if r.get("status") != "OK":
             return False, r.get("message", "No transcript available")
-        return True, f"{len(r.get('segments', []))} lines ({r.get('language', '?')})" + (" (cached)" if r.get("cached") else "")
+        text = f"{len(r.get('segments', []))} lines ({r.get('language', '?')})"
+        if r.get("source") == "supadata":
+            why = "YouTube blocked the scraper" if r.get("fallback_for") == "REQUEST_BLOCKED" else "the scraper failed"
+            text += f" via Supadata fallback ({why})"
+        return True, text + (" (cached)" if r.get("cached") else "")
     if tool == "get_comments":
         if r.get("status") == "COMMENTS_DISABLED":
             return True, "Comments are turned off"

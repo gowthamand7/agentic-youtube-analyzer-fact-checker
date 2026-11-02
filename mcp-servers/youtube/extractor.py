@@ -287,11 +287,15 @@ def fetch_transcript_cached(
     cache: Any,
     start_sec: Optional[int] = None,
     end_sec: Optional[int] = None,
+    fallback: Any = None,
 ) -> Dict[str, Any]:
     """fetch_transcript with a disk cache. The full transcript is cached once; start/end slice it afterwards.
 
     Only definitive outcomes are cached (OK, TRANSCRIPTS_DISABLED). Blocks, outages and unknown errors are
     never cached, so a temporary YouTube rate limit cannot poison later requests.
+
+    `fallback` (a SupadataFallback) is consulted only when the scraper was blocked or errored; if it cannot help,
+    the scraper's own failure is returned.
     """
     key = f"transcript_{video_id}_{'-'.join(sorted(languages or ['en']))}"
     hit = cache.get(key)
@@ -299,6 +303,10 @@ def fetch_transcript_cached(
         return _slice_segments({**hit, "cached": True}, start_sec, end_sec)
 
     result = fetch_transcript(video_id, languages, api)
+    if fallback is not None and result["status"] in ("REQUEST_BLOCKED", "TRANSCRIPT_ERROR"):
+        alt = fallback.fetch(video_id, languages)
+        if alt["status"] in ("OK", "TRANSCRIPTS_DISABLED"):
+            result = {**alt, "fallback_for": result["status"]}
     if result["status"] == "OK":
         cache.put(key, result, TRANSCRIPT_TTL_SEC)
     elif result["status"] == "TRANSCRIPTS_DISABLED":
