@@ -1,0 +1,20 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: youtube-agent-clickhouse
+    ports:
+      - "8123:8123" # HTTP interface
+      - "9000:9000" # Native TCP interface
+    environment:
+      CLICKHOUSE_DB: youtube_agent
+      CLICKHOUSE_USER: admin
+      CLICKHOUSE_PASSWORD: secret
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+      - ./docker/clickhouse/init_schema.sql:/docker-entrypoint-initdb.d/init_schema.sql:ro
+    restart: unless-stopped
+
+volumes:
+  clickhouse_data:
+  clickhouse_logs:
