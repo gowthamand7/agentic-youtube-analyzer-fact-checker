@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube Fact-Checker</title>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <main class="mx-auto max-w-4xl px-4 py-10">
+    <header class="mb-8">
+      <h1 class="text-3xl font-bold tracking-tight">Agentic YouTube Fact-Checker</h1>
+      <p class="mt-2 text-slate-400">
+        Paste a video link. The agent audits its claims against web evidence and community discussion,
+        flags sponsorships, and tracks the channel's accuracy over time.
+      </p>
+    </header>
+
+    <form hx-get="/ui/panel" hx-target="#result" hx-swap="innerHTML" hx-disabled-elt="find button"
+          class="flex flex-col gap-3 sm:flex-row">
+      <label for="video_url" class="sr-only">YouTube URL</label>
+      <input id="video_url" name="video_url" type="url" required maxlength="300"
+             placeholder="https://www.youtube.com/watch?v=..."
+             class="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-4 py-3 text-slate-100 placeholder-slate-500 focus:border-sky-500 focus:outline-none">
+      <button type="submit"
+              class="rounded-lg bg-sky-600 px-6 py-3 font-semibold hover:bg-sky-500 disabled:opacity-50">
+        Analyze
+      </button>
+    </form>
+
+    <section id="result" class="mt-8" aria-live="polite"></section>
+  </main>
+</body>
+</html>
